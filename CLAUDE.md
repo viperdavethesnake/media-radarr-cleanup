@@ -86,6 +86,9 @@ Python packages: `requests`, `python-dotenv`, `numpy`, `matplotlib` (see `requir
 - Audio: English preferred, commentary/audio-description excluded. Codec priority: TrueHD > DTS-HD > DTS > EAC3 > AC3 > FLAC > AAC > MP3
 - Subtitles: SRT preferred; SDH/HI/forced/commentary excluded
 - Video: Multiple video tracks → moved to review directory
+- Chapters: stripped by the **movie** remux, **kept** by the TV remux. On episodic content the markers drive intro/recap skip in Jellyfin and Infuse, so the TV script deliberately omits `--no-chapters`. `verify_movies.py` fails surviving chapters but never scans `cleaned_tv/`, so this produces no flags — do not "restore parity" here.
+
+**TV artwork**: Sonarr's own art (`banner.jpg`, `clearlogo.png`, `seasonNN-poster.jpg`, per-episode `-thumb.jpg`) is discarded with the source folder. `tv_batch_cleaner.py` re-fetches clean copies from TMDB instead: `poster.jpg`, `fanart.jpg`, `logo.png` (English PNG only — TMDB also serves `.svg` logos, which Jellyfin cannot read), `seasonNN-poster.jpg`, and a per-episode `-thumb.jpg`. All artwork downloads are non-fatal; a transient TMDB image error must not park an otherwise-good show in `failed_tv/`. The remux renames per-episode sidecars onto the new `[2160p_hevc_eac3]` stem so Jellyfin keeps matching them.
 
 **Logging**: Dual output (console + `./logs/*.log`), timestamped, emoji status indicators.
 

@@ -142,6 +142,23 @@ def fetch_tmdb_season(tmdb_id, season_num):
     return resp.json()
 
 
+def fetch_tmdb_logo(tmdb_id):
+    """Clear-logo URL from TMDB, English or language-neutral, PNG only.
+
+    Sonarr's own clearlogo.png is discarded with the rest of the source folder,
+    so the pipeline re-fetches a clean copy. TMDB serves some logos as .svg,
+    which Jellyfin will not read — filter those out.
+    """
+    url = (f'https://api.themoviedb.org/3/tv/{tmdb_id}/images'
+           f'?api_key={TMDB_API_KEY}&include_image_language=en,null')
+    logos = (_tmdb_get(url).json().get('logos') or [])
+    logos = [l for l in logos if (l.get('file_path') or '').lower().endswith('.png')]
+    if not logos:
+        return ''
+    logos.sort(key=lambda l: l.get('vote_average') or 0, reverse=True)
+    return 'https://image.tmdb.org/t/p/original' + logos[0]['file_path']
+
+
 def download_image(url, dest):
     if not url:
         return
@@ -150,6 +167,22 @@ def download_image(url, dest):
     with open(dest, 'wb') as f:
         for chunk in resp.iter_content(8192):
             f.write(chunk)
+
+
+def try_download_image(url, dest, label):
+    """Artwork is cosmetic — a transient TMDB image error must not sink a show
+    whose episodes all remuxed fine (that would park the whole thing in
+    failed_tv). Log and move on."""
+    if not url:
+        return
+    try:
+        timed(f"Download {label}", download_image, url, dest)
+    except Exception as e:
+        log(f"  [WARN] {label} download failed ({e}); continuing without it")
+
+
+def season_poster_name(season_num):
+    return 'season-specials-poster.jpg' if season_num == 0 else f'season{season_num:02d}-poster.jpg'
 
 
 def _resume_output_ok(dst_mkv):
@@ -395,6 +428,20 @@ def _move_to_failed(src_folder, base):
         log(f"❌ Could not move to failed: {e}")
 
 
+def _move_file_to_review(src, show_base):
+    review_dir = os.path.join(REVIEW_DIR, show_base)
+    target = os.path.join(review_dir, os.path.basename(src))
+    try:
+        os.makedirs(review_dir, exist_ok=True)
+        if os.path.exists(target):
+            log(f"  [REVIEW] Target exists: {target} — leaving source in place")
+            return
+        shutil.move(src, target)
+        log(f"  [REVIEW] Moved to: {target}")
+    except Exception as e:
+        log(f"❌ Could not move to review: {e}")
+
+
 def _find_videos(folder):
     """Walk show folder; return list of (season_num_or_None, video_path)."""
     out = []
@@ -457,16 +504,27 @@ def clean_show_folder(src_folder):
         os.makedirs(dst_show_folder, exist_ok=True)
 
         by_season = defaultdict(list)
+        unparsed = []
         for season_num, vpath in videos:
             if season_num is None:
-                log(f"  [WARN] Could not determine season for {vpath}; skipping")
+                unparsed.append(vpath)
                 continue
             by_season[season_num].append(vpath)
 
-        ep_total = sum(len(v) for v in by_season.values())
+        # Season-less files (extras, featurettes, odd layouts) used to be
+        # dropped BEFORE ep_total was computed, so they never counted as
+        # failures — the show then hit the all-succeeded branch below and
+        # rmtree'd the source, taking the dropped file with it. Count them in
+        # the total, park them in review_tv, and mark the show partial.
+        ep_total = sum(len(v) for v in by_season.values()) + len(unparsed)
         ep_ok = 0
         ep_failed = 0
         seen_in_run = set()
+
+        for vpath in unparsed:
+            log(f"  [REVIEW] Could not determine season for {os.path.basename(vpath)}")
+            _move_file_to_review(vpath, base)
+            ep_failed += 1
 
         for season_num in sorted(by_season.keys()):
             if shutdown_requested:
@@ -481,6 +539,12 @@ def clean_show_folder(src_folder):
 
             season_dir = os.path.join(dst_show_folder, f"Season {season_num:02d}")
             os.makedirs(season_dir, exist_ok=True)
+
+            if season_meta and season_meta.get('poster_path'):
+                try_download_image(
+                    'https://image.tmdb.org/t/p/original' + season_meta['poster_path'],
+                    os.path.join(dst_show_folder, season_poster_name(season_num)),
+                    f"season {season_num:02d} poster")
 
             for vpath in by_season[season_num]:
                 if shutdown_requested:
@@ -547,6 +611,12 @@ def clean_show_folder(src_folder):
                           write_episode_nfo, meta, ep_meta, imdb_id, tvdb_id,
                           season_num, episode_num, ep_nfo)
 
+                    if ep_meta.get('still_path'):
+                        try_download_image(
+                            'https://image.tmdb.org/t/p/original' + ep_meta['still_path'],
+                            os.path.splitext(dst_mkv)[0] + '-thumb.jpg',
+                            f"episode thumb S{season_num:02d}E{episode_num:02d}")
+
                     tf = tempfile.NamedTemporaryFile('w', suffix='.xml', delete=False)
                     tags_path = tf.name
                     tf.close()
@@ -570,8 +640,14 @@ def clean_show_folder(src_folder):
                             pass
                     ep_failed += 1
 
-        timed("Download poster", download_image, poster_url, os.path.join(dst_show_folder, "poster.jpg"))
-        timed("Download fanart", download_image, fanart_url, os.path.join(dst_show_folder, "fanart.jpg"))
+        try_download_image(poster_url, os.path.join(dst_show_folder, "poster.jpg"), "poster")
+        try_download_image(fanart_url, os.path.join(dst_show_folder, "fanart.jpg"), "fanart")
+        try:
+            logo_url = timed(f"TMDB logos for {meta.get('name')}", fetch_tmdb_logo, meta['id'])
+        except Exception as e:
+            log(f"  [WARN] Logo lookup failed ({e}); continuing without it")
+            logo_url = ''
+        try_download_image(logo_url, os.path.join(dst_show_folder, "logo.png"), "logo")
         timed("Write metadata.json", write_json, meta, os.path.join(dst_show_folder, "metadata.json"))
         timed("Write tvshow.nfo", write_tvshow_nfo, meta, imdb_id, tvdb_id,
               os.path.join(dst_show_folder, "tvshow.nfo"))

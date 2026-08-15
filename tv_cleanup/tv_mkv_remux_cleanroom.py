@@ -224,6 +224,29 @@ def _move_to_failed(folder, base):
         log(f"❌ Could not move to failed: {e}")
 
 
+def _episode_sidecars(mkv_path):
+    """Sidecars the batch stage writes next to each episode, keyed off its stem."""
+    stem = os.path.splitext(mkv_path)[0]
+    return [('.nfo', stem + '.nfo'), ('-thumb.jpg', stem + '-thumb.jpg')]
+
+
+def _carry_sidecars(src_mkv, dst_mkv, move=False):
+    """Copy (or move) each existing episode sidecar onto the output stem.
+
+    The remux renames the episode (adds the [2160p_hevc_eac3] suffix), so the
+    sidecars have to be renamed with it or Jellyfin stops matching them.
+    """
+    dst_stem = os.path.splitext(dst_mkv)[0]
+    for suffix, src_side in _episode_sidecars(src_mkv):
+        if not os.path.isfile(src_side):
+            continue
+        dst_side = dst_stem + suffix
+        if move:
+            shutil.move(src_side, dst_side)
+        elif not os.path.isfile(dst_side):
+            shutil.copy2(src_side, dst_side)
+
+
 def _move_episode_to_review(src_mkv, show_base, season_dir):
     fname = os.path.basename(src_mkv)
     review_dir = os.path.join(REVIEW_DIR, show_base, season_dir)
@@ -234,9 +257,7 @@ def _move_episode_to_review(src_mkv, show_base, season_dir):
             log(f"  [REVIEW] Target exists: {review_target} — leaving source in place")
             return
         shutil.move(src_mkv, review_target)
-        sib_nfo = os.path.splitext(src_mkv)[0] + '.nfo'
-        if os.path.isfile(sib_nfo):
-            shutil.move(sib_nfo, os.path.splitext(review_target)[0] + '.nfo')
+        _carry_sidecars(src_mkv, review_target, move=True)
         log(f"  [REVIEW] Moved to: {review_target}")
     except Exception as e:
         log(f"❌ Could not move to review: {e}")
@@ -317,10 +338,7 @@ def remux_episode(job):
         if os.path.isfile(dst_mkv) and os.path.getsize(dst_mkv) > 0:
             if _resume_output_ok(dst_mkv, info):
                 log(f"    [SKIP] Output exists and validates: {dst_name}")
-                sib_nfo = os.path.splitext(src_mkv)[0] + '.nfo'
-                dst_nfo = os.path.splitext(dst_mkv)[0] + '.nfo'
-                if os.path.isfile(sib_nfo) and not os.path.isfile(dst_nfo):
-                    shutil.copy2(sib_nfo, dst_nfo)
+                _carry_sidecars(src_mkv, dst_mkv)
                 return ('ok', job, None)
             log(f"    [RESUME] Existing output failed validation (truncated?); "
                 f"redoing: {dst_name}")
@@ -333,7 +351,11 @@ def remux_episode(job):
         audio_id = str(audio['id']) if audio else None
         subtitle_id = str(subtitle['id']) if subtitle else None
 
-        cmd = ['mkvmerge', '-o', dst_mkv, '--no-chapters', '--no-attachments',
+        # Chapters are KEPT here, unlike the movie remux: on episodic content the
+        # markers drive intro/recap skip in Jellyfin and Infuse. verify_movies.py
+        # (which fails surviving chapters) never scans cleaned_tv, so this does
+        # not produce flags there.
+        cmd = ['mkvmerge', '-o', dst_mkv, '--no-attachments',
                '--video-tracks', video_id]
         if audio_id is not None:
             cmd += ['--audio-tracks', audio_id]
@@ -355,10 +377,7 @@ def remux_episode(job):
         # the output; only exit >=2 is treated as a real failure.
         run_mkvmerge(cmd, fname, timeout=3600)
 
-        sib_nfo = os.path.splitext(src_mkv)[0] + '.nfo'
-        if os.path.isfile(sib_nfo):
-            dst_nfo = os.path.splitext(dst_mkv)[0] + '.nfo'
-            shutil.copy2(sib_nfo, dst_nfo)
+        _carry_sidecars(src_mkv, dst_mkv)
 
         log(f"    ✔ [DONE] {fname} in {time.perf_counter()-t0:.2f}s")
         return ('ok', job, None)
@@ -405,7 +424,10 @@ def finalize_show(tagged_folder, ok_count, total):
         log(f"  [FINALIZE] {base}: no output dir, skipping")
         return
 
-    for fname in ['tvshow.nfo', 'poster.jpg', 'fanart.jpg']:
+    sidecars = ['tvshow.nfo', 'metadata.json', 'poster.jpg', 'fanart.jpg', 'logo.png']
+    sidecars += [f for f in sorted(os.listdir(tagged_folder))
+                 if f.startswith('season') and f.endswith('-poster.jpg')]
+    for fname in sidecars:
         src_file = os.path.join(tagged_folder, fname)
         if os.path.isfile(src_file):
             shutil.copy2(src_file, os.path.join(dst_show, fname))

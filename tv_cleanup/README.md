@@ -1,147 +1,130 @@
 # TV Show Cleanup Scripts
 
-This directory contains scripts for cleaning and remuxing TV shows, similar to the movie cleanup scripts but adapted for TV show structure with seasons and episodes.
+Two-stage pipeline for cleaning and remuxing TV shows, mirroring the movie pipeline
+but adapted to season/episode structure.
 
 Supported runtime: Python 3.13/3.14.
 
-## Scripts
+## Pipeline
 
-### `tv_batch_cleaner.py`
-**Purpose**: Clean and organize TV shows from source directory to tagged directory
+```
+tvshows/  →  tagged_tv/  →  cleaned_tv/
+              ↘ failed_tv/   ↘ failed_tv/
+              ↘ review_tv/   ↘ review_tv/
+```
 
-**Process**:
-1. **Source**: `./tvshows/` - Raw TV show folders
-2. **Destination**: `./tagged_tv/` - Cleaned and organized TV shows
-3. **Failed**: `./failed_tv/` - Shows that couldn't be processed
+Both stages are run from `/storage/media/servarr` — every path in the scripts is
+relative to the CWD, including `./logs`.
 
-**Features**:
-- Finds all MKV files in show folders (including season subfolders)
-- Extracts season/episode info from filenames (S01E02, 1x02, etc.)
-- Downloads show metadata from TMDb API
-- Creates proper folder structure: `Show_Name/Season_01/Episode.mkv`
-- Strips tags and attachments from MKV files
-- Downloads show posters
-- Creates show.nfo, metadata.json, and tags.xml files
-- **Enhanced naming**: Uses underscores instead of spaces for JF/Infuse compatibility
-- Moves failed shows to `./failed_tv/`
-
-**Episode Detection Patterns**:
-- `S01E02` - Standard season/episode format
-- `1x02` - Alternative format
-- `Season 1 Episode 2` - Text format
-- `1.02` or `1_02` - Simple format
-
-### `tv_mkv_remux_cleanroom.py`
-**Purpose**: Remux TV show episodes to clean up audio/video tracks
-
-**Process**:
-1. **Source**: `./tagged_tv/` - Cleaned TV shows from batch cleaner
-2. **Destination**: `./cleaned_tv/` - Remuxed TV shows
-3. **Failed**: `./failed_tv/` - Shows that failed remuxing
-
-**Features**:
-- Processes all episodes in a show folder
-- Selects best audio track (TrueHD > DTS > EAC3 > AC3)
-- Selects best subtitle track (SRT > ASS/SSA, no PGS)
-- Maintains folder structure with seasons
-- Copies show-level metadata files
-- **Enhanced naming**: Adds technical details `[2160p_HEVC_EAC3]` to filenames
-- Only deletes original if ALL episodes succeed
-- Moves failed shows to `./failed_tv/`
-
-## Usage
-
-### Step 1: Batch Clean
 ```bash
 cd /storage/media/servarr
 python3 /home/david/git/radarr_cleanup/tv_cleanup/tv_batch_cleaner.py
-```
-
-### Step 2: Remux
-```bash
-cd /storage/media/servarr
 python3 /home/david/git/radarr_cleanup/tv_cleanup/tv_mkv_remux_cleanroom.py
 ```
 
-### Python Dependencies
-These scripts use the repo's shared Python dependencies:
+Python dependencies are the repo's shared set (`requirements.txt`).
 
-```bash
-cd /home/david/git/radarr_cleanup
-python3 -m pip install -r requirements.txt
-```
+### Stage 1 — `tv_batch_cleaner.py`
 
-## Enhanced Naming Convention
+Reads `./tvshows/`, writes `./tagged_tv/`.
 
-### Show Folders:
-- **Before**: `Tulsa King (2022) [tvdbid-413215]`
-- **After**: `Tulsa_King`
+- Resolves the show via the `[tvdbid-N]` in Sonarr's folder name, an IMDb id in the
+  folder name, or a `uniqueid` in the source `tvshow.nfo` — in that order.
+- Fetches show + per-season metadata from TMDB.
+- Copies each episode (`cp --reflink=auto`), strips attachments, writes a per-episode
+  `.nfo`, and injects identity tags with `mkvpropedit`.
+- Downloads artwork fresh from TMDB. Sonarr's own artwork is **not** carried over —
+  the source folder is deleted, and clean copies are re-fetched:
+  `poster.jpg`, `fanart.jpg`, `logo.png` (English PNG, highest-voted; `.svg` logos are
+  skipped because Jellyfin cannot read them), `seasonNN-poster.jpg`
+  (`season-specials-poster.jpg` for season 0), and a per-episode `-thumb.jpg`.
+  Artwork failures are logged and non-fatal.
+- Deletes the source folder only when **every** episode succeeded.
 
-### Episode Files:
-- **Before**: `Tulsa King (2022) - S03E01 - Blood and Bourbon [WEBDL-2160p][EAC3 5.1][h265]-WtF.mkv`
-- **After**: `Tulsa_King_S03E01_Episode_[2160p_HEVC_EAC3].mkv`
+**Episode detection is `SxxExx` only.** `1x02`, `Season 1 Episode 2` and `1.02` are
+*not* recognised. A file with no `SxxExx` falls back to its parent `Season NN` /
+`Specials` directory; if neither resolves, the file is moved to
+`review_tv/<source folder>/` and the show is marked partial.
 
-### Benefits:
-- ✅ **JF/Infuse Compatible**: No spaces in filenames
-- ✅ **Technical Details**: Shows resolution, video codec, audio codec
-- ✅ **Clean Structure**: Easy to read and identify
-- ✅ **Consistent**: Matches movie naming convention
-```
+Rejected, by design:
 
-## Directory Structure
+| Condition | Outcome |
+|---|---|
+| No TVDB/IMDb id, or no video files | whole show → `failed_tv/` |
+| TMDB `original_language != 'en'` | whole show → `failed_tv/` (foreign shows are not handled here) |
+| Multi-episode file (`S01E01E02`, `S01E01-E02`) | episode fails — split it manually |
+| `.mp4` source | episode fails — needs manual handling |
+| Season undeterminable | file → `review_tv/`, episode counted as failed |
+| Two sources resolving to the same output name | second one fails |
 
-```
-/storage/media/servarr/
-├── tvshows/           # Source: Raw TV shows
-├── tagged_tv/         # Step 1 output: Cleaned shows
-├── cleaned_tv/        # Step 2 output: Remuxed shows
-├── failed_tv/         # Failed shows from both steps
-└── logs/              # Log files
-    ├── tv_batch_cleaner_debug.log
-    └── tv_remux_cleanroom_debug.log
-```
+On any failure the partially-cleaned output is parked at
+`failed_tv/<name>_cleaned_partial` and the source is kept for a re-run —
+`tagged_tv/` must only ever hold complete shows, because stage 2 publishes whatever
+it finds there.
 
-## Show Structure Example
+Re-runs are resumable: an existing output is trusted only if `mkvmerge` reads it
+cleanly *and* the identity tags are present (tagging is the last step, so their
+presence proves the episode finished).
 
-**Input**:
-```
-tvshows/
-└── Breaking_Bad/
-    ├── Season 1/
-    │   ├── Breaking.Bad.S01E01.mkv
-    │   └── Breaking.Bad.S01E02.mkv
-    └── Season 2/
-        ├── Breaking.Bad.S02E01.mkv
-        └── Breaking.Bad.S02E02.mkv
-```
+### Stage 2 — `tv_mkv_remux_cleanroom.py`
 
-**Output**:
+Reads `./tagged_tv/`, writes `./cleaned_tv/`.
+
+- Keeps one video, one audio, at most one subtitle track.
+- **Audio**: English (or `und`) preferred, commentary and audio-description excluded.
+  Codec priority TrueHD > DTS-HD/MA > DTS > EAC3 > AC3 > FLAC > AAC > MP3. An English
+  or `und` track is relabelled `eng`; a non-English fallback keeps its real tag.
+- **Subtitles**: SRT preferred, then ASS/SSA. PGS/VobSub are never kept. SDH, HI,
+  forced and commentary tracks are excluded, and the kept track is flagged non-default.
+- **Attachments are stripped. Chapters are KEPT** — unlike the movie remux, because on
+  episodic content the markers drive intro/recap skip in Jellyfin and Infuse.
+  `verify_movies.py` (which fails surviving chapters) never scans `cleaned_tv/`.
+- Global tags survive the remux, so embedded identity is preserved.
+- `>1 video track` or no acceptable audio → that episode moves to `review_tv/`.
+- Per-episode `.nfo` and `-thumb.jpg` are renamed onto the new output stem so Jellyfin
+  keeps matching them; show-level sidecars (`tvshow.nfo`, `metadata.json`, `poster.jpg`,
+  `fanart.jpg`, `logo.png`, `seasonNN-poster.jpg`) are copied at finalize.
+- The tagged source folder is deleted only when every episode succeeded.
+
+Re-runs are resumable: an existing output is trusted only if `mkvmerge` reads it
+cleanly and its duration is within 5 s of the source.
+
+## Naming
+
+| | |
+|---|---|
+| Show folder | `Ted_Lasso_(2020)/` |
+| Season folder | `Season 04/` |
+| Episode | `Ted_Lasso_S04E01_Home_[2160p_hevc_eac3].mkv` |
+
+Underscores replace spaces for Jellyfin/Infuse compatibility. The
+`[<res>p_<vcodec>_<acodec>]` suffix is added at the remux stage from the tracks that
+were actually kept. Resolution is classified by width first, so cropped scope
+releases read `2160`/`1080` rather than their raw pixel height.
+
+## Example output
+
 ```
 cleaned_tv/
-└── Breaking_Bad/
-    ├── show.nfo
-    ├── poster.jpg
+└── Reacher_(2022)/
+    ├── tvshow.nfo
     ├── metadata.json
-    ├── tags.xml
-    ├── Season_01/
-    │   ├── Breaking_Bad_S01E01_Pilot.mkv
-    │   └── Breaking_Bad_S01E02_Cat_s_in_the_Bag.mkv
-    └── Season_02/
-        ├── Breaking_Bad_S02E01_Seven_Thirty_Seven.mkv
-        └── Breaking_Bad_S02E02_Grilled.mkv
+    ├── poster.jpg
+    ├── fanart.jpg
+    ├── logo.png
+    ├── season04-poster.jpg
+    └── Season 04/
+        ├── Reacher_S04E01_City_of_Brotherly_Love_[2160p_hevc_eac3].mkv
+        ├── Reacher_S04E01_City_of_Brotherly_Love_[2160p_hevc_eac3].nfo
+        └── Reacher_S04E01_City_of_Brotherly_Love_[2160p_hevc_eac3]-thumb.jpg
 ```
 
 ## Configuration
 
-Edit the scripts to modify:
-- `MAX_WORKERS`: Number of concurrent threads
-- `TMDB_API_KEY`: Your TMDb API key
-- Directory paths
-- Audio/subtitle preferences
+`TMDB_API_KEY` comes from `.env`. Paths, `MAX_WORKERS` (4 — the pool is storage-bound;
+see the concurrency note in the root `CLAUDE.md`) and the audio/subtitle preference
+tables are edited in the scripts.
 
-## Notes
-
-- Scripts skip non-TV directories (movies, music, etc.)
-- Failed shows are moved to `./failed_tv/` for manual review
-- All operations are logged with timestamps
-- Scripts can be interrupted with Ctrl+C for graceful shutdown 
+Logs: `./logs/tv_batch_cleaner_debug.log`, `./logs/tv_remux_cleanroom_debug.log`.
+Both scripts handle `SIGINT`/`SIGTERM` for graceful shutdown; a partial output left by
+a hard kill is detected and redone on the next run.
