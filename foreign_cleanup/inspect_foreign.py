@@ -22,7 +22,7 @@ load_dotenv(os.path.join(REPO_ROOT, '.env'))
 from batch_cleaner import find_imdbid, fetch_tmdb_metadata  # noqa: E402
 
 SERVARR_DIR = os.getenv('RC_SERVARR_DIR') or os.path.join(os.getenv('RC_MEDIA_BASE', '/storage/media'), 'servarr')
-FOREIGN_DIR = os.getenv('RC_FOREIGN_DIR') or os.path.join(SERVARR_DIR, 'foreign')
+FOREIGN_DIR = os.path.join(SERVARR_DIR, 'foreign')
 LOG_DIR = os.path.join(SERVARR_DIR, 'logs')
 MAX_WORKERS = 4
 

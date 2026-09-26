@@ -4,11 +4,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What This Repo Does
 
-A media library management toolkit for cleaning, enriching, and transcoding MKV files destined for Jellyfin. It fetches TMDB metadata, selects optimal audio/subtitle tracks, remuxes MKVs, verifies structure, and optionally transcodes to AV1. There is a parallel pipeline for movies and TV shows.
+A media library management toolkit for cleaning and enriching MKV files destined for Jellyfin. It fetches TMDB metadata, selects optimal audio/subtitle tracks, remuxes MKVs, and verifies structure. There is a parallel pipeline for movies and TV shows.
 
 Pipeline order:
-1. `batch_cleaner.py` / `tv_batch_cleaner.py` — TMDB metadata, NFO generation, MKV tag injection. English-original films are staged into `./tagged/`. Foreign-original films (TMDB `original_language != 'en'`) are **not handled by this pipeline** — they are moved to `./failed/` and managed by separate scripts / manual processes.
-2. `mkv_remux_cleanroom.py` / `tv_mkv_remux_cleanroom.py` — track selection, chapter/attachment removal. Scans `./tagged/` only and writes to `./cleaned/`. The movie pipeline touches only `movies/` → `tagged/` → `cleaned/` (plus `failed/`/`review/`); it never reads or writes `./foreign/`.
+1. `batch_cleaner.py` / `tv_batch_cleaner.py` — TMDB metadata, NFO generation, MKV tag injection. English-original films are staged into `tagged/`. Foreign-original films (TMDB `original_language != 'en'`) are **not handled by this pipeline** — they are moved to `failed/` and managed by separate scripts / manual processes.
+2. `mkv_remux_cleanroom.py` / `tv_mkv_remux_cleanroom.py` — track selection, chapter/attachment removal. Scans `tagged/` only and writes to `cleaned/`. The movie pipeline touches only `movies/` → `tagged/` → `cleaned/` (plus `failed/`/`review/`); it never reads or writes `foreign/`. All of these live under `$RC_SERVARR_DIR`.
 3. `verify_movies.py` — Jellyfin compatibility validation (movies only). It is an **English-pipeline gate**: it fails anything with non-English primary audio or surviving chapters. That is intentional — a foreign film that sneaks past the batch stage should flag. Side effect: legitimate foreign_cleanup outputs staged in the shared `cleaned/` dir (which keep chapters and original-language audio by design) will also show FAILED. Those flags are expected noise, not defects — do not "fix" verify to skip them, and never auto-move flagged folders (it would yank the foreign pipeline's staged outputs).
 
 ## Running Scripts
@@ -41,9 +41,6 @@ python3 music_cleanup/music_cleaner.py --no-publish # stop at cleaned_music/ (--
 ./maintenance/audit_library.py /storage/media/movies --out /tmp/audit   # full 10-check audit
 ./maintenance/audit_decode_integrity.py --workers 3 --threads 4         # ffmpeg full-decode pass; --resume <jsonl> to continue
 
-# AV1 benchmarking (requires NVIDIA GPU)
-cd movie_analyzer && ./nvidia_av1_benchmark.py
-./quality_analyzer.py -r results/*.json --plot --report
 ```
 
 There are no automated tests. Use the helper scripts in `movie_cleanup/helpers/` to spot-check and debug (e.g., `peek_mkvinfo.py`, `spot_check_movies.py`). The old `tv_cleanup/helpers/` (hardcoded single-show migration scripts) was deleted 2026-07; recover from git history if ever needed.
@@ -58,25 +55,25 @@ Scripts load configuration from `.env` (not committed; see `.env.example`). All 
 | `RC_MEDIA_BASE` | Root path for media storage |
 | `RC_SERVARR_DIR` | Servarr working tree for stage dirs, logs, `nfo_backups/`, compare plans (default `$RC_MEDIA_BASE/servarr`) |
 | `RC_MEDIA_OWNER` / `RC_MEDIA_GROUP` | Ownership for `fix_media_perms.py` |
-| `RC_VERIFY_SCAN_DIR`, `RC_CLEANED_DIR` | Movie script overrides; `RC_CLEANED_DIR` defaults to `$RC_SERVARR_DIR/cleaned` |
-| `RC_MOVIES_DIR`, `RC_WORK_DIR`, `RC_OUTPUT_DIR` | AV1 analyzer paths |
-| `RC_FFMPEG_BIN`, `RC_FFPROBE_BIN`, `RC_FFMPEG_PREFIX` | Custom FFmpeg locations |
+| `RC_VERIFY_SCAN_DIR` | Library scanned by `verify_movies.py` / `audit_decode_integrity.py` |
+| `RC_FFMPEG_BIN`, `RC_FFPROBE_BIN` | Custom FFmpeg locations |
+| `RADARR_URL`, `RADARR_API_KEY`, `RADARR_PROFILE_ID`, `RADARR_ROOT_FOLDER` | `maintenance/radarr_upgrade_push.py` |
+| `OPENSUB_API_KEY` | `foreign_cleanup/` subtitle search |
 | `LIDARR_URL`, `LIDARR_API_KEY` | `music_cleanup/music_cleaner.py` Lidarr handoff |
 
 ## System Dependencies
 
 - **MKVToolNix**: `mkvmerge`, `mkvpropedit`, `mkvinfo`
-- **FFmpeg**: with AV1 + VMAF support (for `movie_analyzer/`)
+- **FFmpeg**: with the `alac` encoder (for `music_cleanup/`) and software decoders (for `audit_decode_integrity.py`)
 - **setfacl** (package `acl`) — for `fix_media_perms.py`
-- **nvidia-smi** + CUDA — for `nvidia_av1_benchmark.py`
 
-Python packages: `requests`, `python-dotenv`, `numpy`, `matplotlib`, `mutagen` (see `requirements.txt`).
+Python packages: `requests`, `python-dotenv`, `mutagen` (see `requirements.txt`).
 
 ## Architecture
 
 **Concurrency**: All major scripts use `ThreadPoolExecutor`, `MAX_WORKERS = 4` in `batch_cleaner.py`, `mkv_remux_cleanroom.py`, and `tv_mkv_remux_cleanroom.py`. Despite the TMDB-lookup stage being network-bound, `batch_cleaner.py` also does local file I/O per movie (`fast_copy` into `./tagged`, `mkvmerge -J` metadata reads) against the same ZFS pool used by the remux stage, Jellyfin, Frigate, and Ollama — so it's storage-bound too, not just network-bound (originally ran at 8 workers; dropped to 4 in 2026-07 after concurrent `fast_copy`s of several 40+ GB Remux files saturated the pool and stalled an unrelated `mkvmerge -J` metadata read past its timeout). The remux stage is **storage-bound, not CPU-bound** — each `mkvmerge` is a demux/remux of a 40–90 GB file, so the bottleneck is ZFS pool bandwidth, not cores. Running too many in parallel splits that one pool N ways, collapses per-job throughput, and trips the per-job timeout (this happened at 12-way: 9 of 16 jobs timed out and landed in `./failed/`). Keep all three at 4 so each job gets enough bandwidth to finish well under timeout and leaves I/O headroom for co-resident Jellyfin/Frigate/Ollama. More threads do **not** make any of these faster here. Scripts register `SIGINT`/`SIGTERM` handlers for graceful shutdown.
 
-**File routing**: Failed files go to `./failed/`, `./failed_tv/`, or `./failed_music/`. Files needing manual review (multiple video tracks, no acceptable audio, unparseable album folders) go to `./review/`, `./review_tv/`, or `./review_music/`. Foreign-original sources are **not processed by this pipeline** — the movie batch step routes them to `./failed/` and they are handled by separate scripts / manual work.
+**File routing**: Failed files go to `failed/`, `failed_tv/`, or `failed_music/`. Files needing manual review (multiple video tracks, no acceptable audio, unparseable album folders) go to `review/`, `review_tv/`, or `review_music/`. Foreign-original sources are **not processed by this pipeline** — the movie batch step routes them to `failed/` and they are handled by separate scripts / manual work.
 
 **Music placeholder**: `music_cleaner.py` keeps a permanent empty directory `music/.lidarr_keep` inside the Lidarr root. Lidarr refuses a track-file bulk delete with HTTP 409 "root folder is empty" when its root has no subdirectories, and its own delete-empty-folders setting removes the artist folder mid-operation, so without the placeholder the last album's handoff always fails. Do not remove it.
 
@@ -200,6 +197,5 @@ POST /api/v3/command
 movie_cleanup/      Main movie pipeline + helpers/
 tv_cleanup/         Main TV pipeline
 music_cleanup/      Music pipeline: Lidarr staging -> ALAC -> library (see its README)
-movie_analyzer/     AV1 GPU benchmarking and quality analysis
 maintenance/        Read-only reporting and permission tools
 ```

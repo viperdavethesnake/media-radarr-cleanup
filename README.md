@@ -8,8 +8,7 @@ A collection of tools for managing and optimizing movie and TV collections.
 radarr_cleanup/
 ├── movie_cleanup/              # MKV processing and metadata tools for Movies
 │   ├── batch_cleaner.py        # Extract metadata, clean names, inject tags
-│   ├── mkv_remux_cleanroom.py  # Track selection and remuxing (handles both ./tagged/ English-original and ./foreign/ original-language films)
-│   ├── foreign_post_processor.py # Legacy IETF BCP 47 normalizer (superseded by mkv_remux_cleanroom's foreign path)
+│   ├── mkv_remux_cleanroom.py  # Track selection and remuxing (tagged/ -> cleaned/; foreign films are foreign_cleanup/'s job)
 │   ├── helpers/                # Helper scripts and utilities
 │   └── README.md               # Detailed documentation
 ├── maintenance/                # Operational maintenance scripts for media libraries
@@ -27,11 +26,6 @@ radarr_cleanup/
 ├── music_cleanup/              # Music pipeline (Lidarr → ALAC → /storage/media/music)
 │   ├── music_cleaner.py        # FLAC/APE/WV → ALAC, tag carry-over, verify, publish, Lidarr handoff
 │   └── README.md               # Music cleanup documentation
-├── movie_analyzer/             # AV1 transcoding and analysis tools
-│   ├── nvidia_av1_benchmark.py # AV1 encoder benchmarking
-│   ├── quality_analyzer.py     # VMAF quality analysis
-│   ├── results/                # Analysis results
-│   └── README.md               # Analysis documentation
 └── README.md                   # This file
 ```
 
@@ -57,12 +51,6 @@ Tools for processing albums imported by Lidarr:
 - **Tag Carry-over**: MusicBrainz Picard MP4 mapping, all MusicBrainz ids and cover art
 - **Verification**: decoded-PCM hash equality and tag read-back before the source is removed
 - **Publish**: permissions, move to `/storage/media/music`, unmonitor + drop records in Lidarr (`--no-publish` to stop early)
-
-### AV1 Transcoding & Analysis (`movie_analyzer/`)
-Tools for transcoding to AV1 format and quality benchmarking:
-- **AV1 Benchmarking**: Test different encoders (SVT-AV1, NVENC)
-- **Quality Analysis**: VMAF scoring and comparison
-- **Batch Processing**: Generate and run transcoding scripts
 
 ### Maintenance (`maintenance/`)
 Operational scripts for keeping the Jellyfin libraries healthy.
@@ -184,23 +172,16 @@ cd tv_cleanup
 python3 /home/david/git/radarr_cleanup/music_cleanup/music_cleaner.py   # end to end; --no-publish to stop at cleaned_music/
 ```
 
-### Analysis
-```bash
-cd movie_analyzer
-./nvidia_av1_benchmark.py
-```
-
 ## 🔧 Requirements
 
 
 - Python 3.13 or 3.14
-- FFmpeg with AV1 and VMAF support
+- FFmpeg (software decoders for `maintenance/audit_decode_integrity.py`)
 - `ffprobe` (typically via `ffmpeg`) or `mediainfo` (for `maintenance/codec_bitrate_report.py`)
 - `setfacl` (package `acl`) for `maintenance/fix_media_perms.py`
 - MKVToolNix (`mkvmerge`, `mkvpropedit`)
 - TMDB API key (for metadata — set `TMDB_API_KEY` in `.env`)
 - `requests` and `python-dotenv` (install via `pip install -r requirements.txt`)
-- `numpy` and `matplotlib` (for `movie_analyzer/quality_analyzer.py`)
 - `mutagen` and FFmpeg with the `alac` encoder (for `music_cleanup/`)
 - Lidarr API key (set `LIDARR_URL` / `LIDARR_API_KEY` in `.env`) for the Lidarr handoff in `music_cleanup/music_cleaner.py`
 
@@ -210,9 +191,8 @@ For Ubuntu 25/26 hosts with different mount layouts, use environment variables i
 
 - `RC_MEDIA_BASE`, `RC_MEDIA_OWNER`, `RC_MEDIA_GROUP` for `maintenance/fix_media_perms.py`
 - `RC_SERVARR_DIR` — the working tree every pipeline/maintenance script uses for stage dirs, logs, `nfo_backups/` and compare plans (default `$RC_MEDIA_BASE/servarr`). Scripts can be run from any directory.
-- `RC_VERIFY_SCAN_DIR`, `RC_FOREIGN_DIR`, `RC_CLEANED_DIR` for movie cleanup tools (the last two default under `RC_SERVARR_DIR`)
-- `RC_FFMPEG_PREFIX`, `RC_FFMPEG_BIN`, `RC_FFPROBE_BIN`, `RC_VMAF_LIB_DIR`, `RC_LD_LIBRARY_PATH`
-- `RC_MOVIES_DIR`, `RC_WORK_DIR`, `RC_OUTPUT_DIR` for analyzer paths
+- `RC_VERIFY_SCAN_DIR` for the library `verify_movies.py` / `audit_decode_integrity.py` scan
+- `RC_FFMPEG_BIN`, `RC_FFPROBE_BIN` for non-PATH FFmpeg builds
 
 ## 📝 Notes
 

@@ -115,8 +115,8 @@ python3 -m pip install -r requirements.txt
 Use env vars when server paths differ:
 
 ```bash
-export RC_VERIFY_SCAN_DIR="/storage/media/movies"
-export RC_CLEANED_DIR="/storage/media/servarr/cleaned"
+export RC_SERVARR_DIR="/storage/media/servarr"    # stage dirs + logs (default $RC_MEDIA_BASE/servarr)
+export RC_VERIFY_SCAN_DIR="/storage/media/movies" # library scanned by verify_movies.py
 ```
 
 ### Configuration

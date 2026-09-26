@@ -52,7 +52,7 @@ load_dotenv()
 
 # NEW = newly downloaded / newly processed copies (candidate replacements)
 SERVARR_DIR = os.getenv('RC_SERVARR_DIR') or os.path.join(os.getenv('RC_MEDIA_BASE', '/storage/media'), 'servarr')
-DEFAULT_NEW_PATH = os.getenv('RC_CLEANED_DIR') or os.path.join(SERVARR_DIR, 'cleaned')
+DEFAULT_NEW_PATH = os.path.join(SERVARR_DIR, 'cleaned')
 LOG_DIR = os.path.join(SERVARR_DIR, 'logs')
 
 # EXISTING = your current library (the stuff you already have).

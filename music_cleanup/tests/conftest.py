@@ -53,15 +53,21 @@ def tag_flac(path, n, total, rg_mbid, extra=None, cover=True):
     f.save()
 
 
-@pytest.fixture
-def stage(tmp_path, monkeypatch):
-    """Scratch servarr tree; RC_SERVARR_DIR points music_cleaner at it."""
-    for d in ('music', 'logs'):
-        (tmp_path / d).mkdir()
+@pytest.fixture(autouse=True)
+def isolated_servarr(tmp_path, monkeypatch):
+    """Every test gets its own RC_SERVARR_DIR so none can touch the real servarr tree."""
     monkeypatch.setenv('RC_SERVARR_DIR', str(tmp_path))
     from music_cleanup import music_cleaner
     importlib.reload(music_cleaner)
     return tmp_path
+
+
+@pytest.fixture
+def stage(isolated_servarr):
+    """Scratch servarr tree laid out with music/ and logs/."""
+    for d in ('music', 'logs'):
+        (isolated_servarr / d).mkdir()
+    return isolated_servarr
 
 
 def make_album(stage, artist='Test Artist', album='Test_Album_(2026)', n=3, bits=(16, 16, 24),
