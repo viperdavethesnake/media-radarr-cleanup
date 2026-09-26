@@ -25,6 +25,10 @@ python3 movie_cleanup/verify_movies.py --scan-dir ./cleaned
 python3 tv_cleanup/tv_batch_cleaner.py
 python3 tv_cleanup/tv_mkv_remux_cleanroom.py
 
+# Music pipeline (run from /storage/media/servarr)
+python3 music_cleanup/music_cleaner.py              # music/ -> cleaned_music/ -> /storage/media/music + Lidarr unmonitor
+python3 music_cleanup/music_cleaner.py --no-publish # stop at cleaned_music/ (--publish-only, --no-lidarr also exist)
+
 # Maintenance
 ./maintenance/fix_media_perms.py              # dry-run
 ./maintenance/fix_media_perms.py --apply      # apply with auto-sudo
@@ -53,6 +57,7 @@ Scripts load configuration from `.env` (not committed; see `.env.example`). All 
 | `RC_VERIFY_SCAN_DIR`, `RC_CLEANED_DIR` | Movie script paths |
 | `RC_MOVIES_DIR`, `RC_WORK_DIR`, `RC_OUTPUT_DIR` | AV1 analyzer paths |
 | `RC_FFMPEG_BIN`, `RC_FFPROBE_BIN`, `RC_FFMPEG_PREFIX` | Custom FFmpeg locations |
+| `LIDARR_URL`, `LIDARR_API_KEY` | `music_cleanup/music_cleaner.py` Lidarr handoff |
 
 ## System Dependencies
 
@@ -61,7 +66,7 @@ Scripts load configuration from `.env` (not committed; see `.env.example`). All 
 - **setfacl** (package `acl`) — for `fix_media_perms.py`
 - **nvidia-smi** + CUDA — for `nvidia_av1_benchmark.py`
 
-Python packages: `requests`, `python-dotenv`, `numpy`, `matplotlib` (see `requirements.txt`).
+Python packages: `requests`, `python-dotenv`, `numpy`, `matplotlib`, `mutagen` (see `requirements.txt`).
 
 ## Architecture
 
@@ -188,6 +193,7 @@ POST /api/v3/command
 ```
 movie_cleanup/      Main movie pipeline + helpers/
 tv_cleanup/         Main TV pipeline
+music_cleanup/      Music pipeline: Lidarr staging -> ALAC -> library (see its README)
 movie_analyzer/     AV1 GPU benchmarking and quality analysis
 maintenance/        Read-only reporting and permission tools
 ```

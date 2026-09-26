@@ -1,20 +1,20 @@
 [
   {
-    "folder": "Ip_Man_4-_The_Finale_(2019)",
+    "folder": "Ip_Man_4_The_Finale_(2019)",
     "src_folder": "/storage/media/servarr/foreign/Ip_Man_4-_The_Finale_(2019)",
     "imdb": "tt2076298",
     "video": 0,
     "audio_default": 2,
     "audio_default_lang": "chi",
     "audio_default_codec": "A_TRUEHD",
-    "audio_default_name": "Chinese/English",
+    "audio_default_name": "Chinese",
     "audio_secondary": 1,
     "audio_secondary_lang": "eng",
     "audio_secondary_codec": "A_DTS",
     "audio_secondary_name": "English",
     "subtitles": [
       {
-        "file": "/home/david/git/radarr_cleanup/foreign_cleanup/subs/Ip_Man_4-_The_Finale_(2019).en.srt",
+        "file": "/home/david/git/radarr_cleanup/foreign_cleanup/subs/Ip_Man_4_The_Finale_(2019).en.synced.srt",
         "lang": "eng",
         "name": "English",
         "default": true,

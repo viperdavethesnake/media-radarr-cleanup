@@ -1,0 +1,50 @@
+[
+  {
+    "folder": "New_Police_Story_(2004)",
+    "src_folder": "/storage/media/servarr/foreign/New_Police_Story_(2004)",
+    "imdb": "tt0386005",
+    "video": 0,
+    "audio_default": 1,
+    "audio_default_lang": "chi",
+    "audio_default_codec": "A_DTS",
+    "audio_default_name": "Cantonese",
+    "audio_secondary": 3,
+    "audio_secondary_lang": "eng",
+    "audio_secondary_codec": "A_AC3",
+    "audio_secondary_name": "English",
+    "subtitles": [
+      {
+        "file": "/home/david/git/radarr_cleanup/foreign_cleanup/subs/New_Police_Story_(2004).en.synced.srt",
+        "lang": "eng",
+        "name": "English",
+        "default": true,
+        "forced": false
+      }
+    ],
+    "keep_chapters": true
+  },
+  {
+    "folder": "Once_Upon_a_Time_in_China_(1991)",
+    "src_folder": "/storage/media/servarr/foreign/Once_Upon_a_Time_in_China_(1991)",
+    "imdb": "tt0103285",
+    "video": 0,
+    "audio_default": 1,
+    "audio_default_lang": "chi",
+    "audio_default_codec": "A_DTS",
+    "audio_default_name": "Cantonese",
+    "audio_secondary": 3,
+    "audio_secondary_lang": "eng",
+    "audio_secondary_codec": "A_DTS",
+    "audio_secondary_name": "English",
+    "subtitles": [
+      {
+        "file": "/home/david/git/radarr_cleanup/foreign_cleanup/subs/Once_Upon_a_Time_in_China_(1991).en.synced.srt",
+        "lang": "eng",
+        "name": "English",
+        "default": true,
+        "forced": false
+      }
+    ],
+    "keep_chapters": true
+  }
+]
