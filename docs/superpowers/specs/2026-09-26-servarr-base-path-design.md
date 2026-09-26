@@ -53,8 +53,8 @@ remain, but their defaults derive from `SERVARR_DIR` instead of being literals.
 | `foreign_cleanup/inspect_foreign.py` | `LOG_DIR` (was `REPO_ROOT/logs`); `RC_FOREIGN_DIR` default → `SERVARR_DIR/foreign` |
 | `foreign_cleanup/remux_foreign.py` | `LOG_DIR`; `RC_CLEANED_DIR` default → `SERVARR_DIR/cleaned` |
 | `foreign_cleanup/scan_library_languages.py` | `LOG_DIR` and `--cache` default |
-| `maintenance/regenerate_nfos.py` | `LOG_DIR`, `BACKUP_DIR` + add `load_dotenv()` |
-| `maintenance/audit_decode_integrity.py` | `LOG_DIR` + add `load_dotenv()`; docstring paths |
+| `maintenance/regenerate_nfos.py` | `LOG_DIR`, `BACKUP_DIR` (already loads dotenv); `mkdir(parents=True)` |
+| `maintenance/audit_decode_integrity.py` | `LOG_DIR` (already loads dotenv); `mkdir(parents=True)`; docstring paths |
 | `maintenance/compare_movie_copies.py` | `DEFAULT_NEW_PATH`, `compare_plan_*.json` path + add `load_dotenv()`; docstring paths |
 | `.env.example` | add `RC_SERVARR_DIR` with precedence comment |
 | `CLAUDE.md`, `README.md`, `music_cleanup/README.md` | document base path; remove "run from /storage/media/servarr" wording |
