@@ -19,7 +19,8 @@ from dotenv import load_dotenv
 load_dotenv(os.path.join(REPO_ROOT, '.env'))
 
 TMDB_API_KEY = os.getenv('TMDB_API_KEY')
-LOG_DIR = os.path.join(REPO_ROOT, 'logs')
+SERVARR_DIR = os.getenv('RC_SERVARR_DIR') or os.path.join(os.getenv('RC_MEDIA_BASE', '/storage/media'), 'servarr')
+LOG_DIR = os.path.join(SERVARR_DIR, 'logs')
 
 _print_lock = threading.Lock()
 
@@ -88,7 +89,7 @@ def tmdb_language(tmdb_id, session):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--dir', default='/storage/media/movies')
-    ap.add_argument('--cache', default=os.path.join(REPO_ROOT, 'logs', 'library_languages.json'))
+    ap.add_argument('--cache', default=os.path.join(LOG_DIR, 'library_languages.json'))
     ap.add_argument('--workers', type=int, default=4)
     ap.add_argument('--limit', type=int)
     ap.add_argument('--json', help='Write the foreign-film report here')

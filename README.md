@@ -146,7 +146,7 @@ Operational scripts for keeping the Jellyfin libraries healthy.
 #### `audit_decode_integrity.py`
 - **What it does (read-only)**: Full ffmpeg software-decode of every MKV in the library, capturing decoder errors that `ffprobe` cannot surface — HEVC slice corruption ("First slice in a frame missing"), H.264 mmco/reference-frame errors, missing PPS/SPS, decode_slice_header errors, concealment warnings, etc. These are the bitstream defects that cause playback hangs/pauses but pass any header-only check.
 - **Why software decode**: NVDEC silently conceals slice/reference errors to keep playback smooth. CPU `libavcodec` is the sensitive path; the audit deliberately avoids hardware acceleration.
-- **Output**: incremental log + append-only JSONL + markdown summary in `./logs/movie_decode_audit_<timestamp>.{log,jsonl,md}`.
+- **Output**: incremental log + append-only JSONL + markdown summary in `$RC_SERVARR_DIR/logs/movie_decode_audit_<timestamp>.{log,jsonl,md}` (default `/storage/media/servarr/logs/`).
 - **Resume**: passing `--resume <prior.jsonl>` skips MKVs already recorded as OK/ERRORS/TIMEOUT (retries FAILED/INTERRUPTED). Essential for multi-day runs.
 - **Usage**:
 
@@ -161,7 +161,7 @@ Operational scripts for keeping the Jellyfin libraries healthy.
 ./maintenance/audit_decode_integrity.py --limit 5
 
 # Continue a previous run after SIGINT / reboot
-./maintenance/audit_decode_integrity.py --resume logs/movie_decode_audit_20260522_161216.jsonl
+./maintenance/audit_decode_integrity.py --resume /storage/media/servarr/logs/movie_decode_audit_20260522_161216.jsonl
 ```
 
 ## 🚀 Quick Start
@@ -181,7 +181,6 @@ cd tv_cleanup
 
 ### Music Processing
 ```bash
-cd /storage/media/servarr
 python3 /home/david/git/radarr_cleanup/music_cleanup/music_cleaner.py   # end to end; --no-publish to stop at cleaned_music/
 ```
 
@@ -210,7 +209,8 @@ cd movie_analyzer
 For Ubuntu 25/26 hosts with different mount layouts, use environment variables instead of editing scripts:
 
 - `RC_MEDIA_BASE`, `RC_MEDIA_OWNER`, `RC_MEDIA_GROUP` for `maintenance/fix_media_perms.py`
-- `RC_VERIFY_SCAN_DIR`, `RC_FOREIGN_DIR`, `RC_CLEANED_DIR` for movie cleanup tools
+- `RC_SERVARR_DIR` — the working tree every pipeline/maintenance script uses for stage dirs, logs, `nfo_backups/` and compare plans (default `$RC_MEDIA_BASE/servarr`). Scripts can be run from any directory.
+- `RC_VERIFY_SCAN_DIR`, `RC_FOREIGN_DIR`, `RC_CLEANED_DIR` for movie cleanup tools (the last two default under `RC_SERVARR_DIR`)
 - `RC_FFMPEG_PREFIX`, `RC_FFMPEG_BIN`, `RC_FFPROBE_BIN`, `RC_VMAF_LIB_DIR`, `RC_LD_LIBRARY_PATH`
 - `RC_MOVIES_DIR`, `RC_WORK_DIR`, `RC_OUTPUT_DIR` for analyzer paths
 

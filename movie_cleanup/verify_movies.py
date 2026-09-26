@@ -25,10 +25,14 @@ from typing import Dict, List, Tuple, Optional, Any
 from dataclasses import dataclass
 from pathlib import Path
 import sys
+from dotenv import load_dotenv
+
+load_dotenv()
 
 # ========== CONFIG =============
 DEFAULT_SCAN_DIR = os.getenv('RC_VERIFY_SCAN_DIR', '/storage/media/movies')
-LOG_DIR = './logs'
+SERVARR_DIR = os.getenv('RC_SERVARR_DIR') or os.path.join(os.getenv('RC_MEDIA_BASE', '/storage/media'), 'servarr')
+LOG_DIR = os.path.join(SERVARR_DIR, 'logs')
 MAX_WORKERS = 12
 
 # ========== MODERN STYLING =============

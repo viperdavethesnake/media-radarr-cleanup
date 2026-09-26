@@ -45,8 +45,9 @@ DEFAULT_SCAN_DIRS = [
     "/storage/media/movies",
     "/storage/media/documentaries",
 ]
-LOG_DIR = Path("./logs")
-BACKUP_DIR = Path("./nfo_backups")
+SERVARR_DIR = os.getenv('RC_SERVARR_DIR') or os.path.join(os.getenv('RC_MEDIA_BASE', '/storage/media'), 'servarr')
+LOG_DIR = Path(SERVARR_DIR) / "logs"
+BACKUP_DIR = Path(SERVARR_DIR) / "nfo_backups"
 MAX_WORKERS = 8
 
 VIDEO_EXTS = {".mkv", ".mp4", ".m4v", ".avi", ".mov", ".wmv", ".ts"}
@@ -78,7 +79,7 @@ def log(msg: str) -> None:
     ts   = time.strftime("[%Y-%m-%d %H:%M:%S]")
     line = f"{ts} {msg}"
     print(line)
-    LOG_DIR.mkdir(exist_ok=True)
+    LOG_DIR.mkdir(parents=True, exist_ok=True)
     with open(LOG_DIR / "regenerate_nfos.log", "a", encoding="utf-8") as f:
         f.write(line + "\n")
 
@@ -438,9 +439,9 @@ def main() -> int:
         log("❌  TMDB_API_KEY not set — check your .env file")
         return 1
 
-    LOG_DIR.mkdir(exist_ok=True)
+    LOG_DIR.mkdir(parents=True, exist_ok=True)
     if not dry_run:
-        BACKUP_DIR.mkdir(exist_ok=True)
+        BACKUP_DIR.mkdir(parents=True, exist_ok=True)
 
     folders = collect_folders(scan_dirs)
     if args.limit > 0:

@@ -23,8 +23,9 @@ from batch_cleaner import (fetch_tmdb_metadata, write_tags_xml, set_tags_in_mkv,
                            write_nfo, download_image)
 from mkv_remux_cleanroom import enhanced_file_name  # noqa: E402
 
-LOG_DIR = os.path.join(REPO_ROOT, 'logs')
-CLEANED_DIR = os.getenv('RC_CLEANED_DIR', '/storage/media/servarr/cleaned')
+SERVARR_DIR = os.getenv('RC_SERVARR_DIR') or os.path.join(os.getenv('RC_MEDIA_BASE', '/storage/media'), 'servarr')
+LOG_DIR = os.path.join(SERVARR_DIR, 'logs')
+CLEANED_DIR = os.getenv('RC_CLEANED_DIR') or os.path.join(SERVARR_DIR, 'cleaned')
 REMUX_TIMEOUT = 3600      # per repo standard; ~2.7x headroom over projection here
 
 shutdown_requested = False

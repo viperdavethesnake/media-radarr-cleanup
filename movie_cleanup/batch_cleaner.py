@@ -9,11 +9,12 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # ========== CONFIG =============
-SOURCE_DIR = './movies'
-DEST_DIR = './tagged'
-REVIEW_DIR = './review'
-FAILED_DIR = './failed'
-LOG_DIR = './logs'
+SERVARR_DIR = os.getenv('RC_SERVARR_DIR') or os.path.join(os.getenv('RC_MEDIA_BASE', '/storage/media'), 'servarr')
+SOURCE_DIR = os.path.join(SERVARR_DIR, 'movies')
+DEST_DIR = os.path.join(SERVARR_DIR, 'tagged')
+REVIEW_DIR = os.path.join(SERVARR_DIR, 'review')
+FAILED_DIR = os.path.join(SERVARR_DIR, 'failed')
+LOG_DIR = os.path.join(SERVARR_DIR, 'logs')
 MAX_WORKERS = 4
 TMDB_API_KEY = os.getenv('TMDB_API_KEY', 'your_api_key_here')
 

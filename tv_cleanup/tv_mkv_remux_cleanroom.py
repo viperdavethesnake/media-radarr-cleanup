@@ -3,12 +3,16 @@
 import os, shutil, subprocess, json, time, traceback, re, signal
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from dotenv import load_dotenv
 
-TAGGED_DIR = './tagged_tv'
-CLEANED_DIR = './cleaned_tv'
-REVIEW_DIR = './review_tv'
-FAILED_DIR = './failed_tv'
-LOG_DIR = './logs'
+load_dotenv()
+
+SERVARR_DIR = os.getenv('RC_SERVARR_DIR') or os.path.join(os.getenv('RC_MEDIA_BASE', '/storage/media'), 'servarr')
+TAGGED_DIR = os.path.join(SERVARR_DIR, 'tagged_tv')
+CLEANED_DIR = os.path.join(SERVARR_DIR, 'cleaned_tv')
+REVIEW_DIR = os.path.join(SERVARR_DIR, 'review_tv')
+FAILED_DIR = os.path.join(SERVARR_DIR, 'failed_tv')
+LOG_DIR = os.path.join(SERVARR_DIR, 'logs')
 MAX_WORKERS = 4
 
 shutdown_requested = False

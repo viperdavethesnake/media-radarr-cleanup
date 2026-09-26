@@ -16,16 +16,19 @@ Pipeline order:
 ```bash
 source .venv/bin/activate   # Python 3.14 venv at repo root
 
+# All pipeline scripts resolve stage dirs and logs from RC_SERVARR_DIR
+# (default $RC_MEDIA_BASE/servarr = /storage/media/servarr). CWD does not matter.
+
 # Movie pipeline
 python3 movie_cleanup/batch_cleaner.py
 python3 movie_cleanup/mkv_remux_cleanroom.py
-python3 movie_cleanup/verify_movies.py --scan-dir ./cleaned
+python3 movie_cleanup/verify_movies.py --scan-dir /storage/media/servarr/cleaned
 
 # TV pipeline
 python3 tv_cleanup/tv_batch_cleaner.py
 python3 tv_cleanup/tv_mkv_remux_cleanroom.py
 
-# Music pipeline (run from /storage/media/servarr)
+# Music pipeline
 python3 music_cleanup/music_cleaner.py              # music/ -> cleaned_music/ -> /storage/media/music + Lidarr unmonitor
 python3 music_cleanup/music_cleaner.py --no-publish # stop at cleaned_music/ (--publish-only, --no-lidarr also exist)
 
@@ -53,8 +56,9 @@ Scripts load configuration from `.env` (not committed; see `.env.example`). All 
 |---|---|
 | `TMDB_API_KEY` | Required — TMDB API key |
 | `RC_MEDIA_BASE` | Root path for media storage |
+| `RC_SERVARR_DIR` | Servarr working tree for stage dirs, logs, `nfo_backups/`, compare plans (default `$RC_MEDIA_BASE/servarr`) |
 | `RC_MEDIA_OWNER` / `RC_MEDIA_GROUP` | Ownership for `fix_media_perms.py` |
-| `RC_VERIFY_SCAN_DIR`, `RC_CLEANED_DIR` | Movie script paths |
+| `RC_VERIFY_SCAN_DIR`, `RC_CLEANED_DIR` | Movie script overrides; `RC_CLEANED_DIR` defaults to `$RC_SERVARR_DIR/cleaned` |
 | `RC_MOVIES_DIR`, `RC_WORK_DIR`, `RC_OUTPUT_DIR` | AV1 analyzer paths |
 | `RC_FFMPEG_BIN`, `RC_FFPROBE_BIN`, `RC_FFMPEG_PREFIX` | Custom FFmpeg locations |
 | `LIDARR_URL`, `LIDARR_API_KEY` | `music_cleanup/music_cleaner.py` Lidarr handoff |
@@ -97,7 +101,7 @@ Python packages: `requests`, `python-dotenv`, `numpy`, `matplotlib`, `mutagen` (
 
 **TV artwork**: Sonarr's own art (`banner.jpg`, `clearlogo.png`, `seasonNN-poster.jpg`, per-episode `-thumb.jpg`) is discarded with the source folder. `tv_batch_cleaner.py` re-fetches clean copies from TMDB instead: `poster.jpg`, `fanart.jpg`, `logo.png` (English PNG only — TMDB also serves `.svg` logos, which Jellyfin cannot read), `seasonNN-poster.jpg`, and a per-episode `-thumb.jpg`. All artwork downloads are non-fatal; a transient TMDB image error must not park an otherwise-good show in `failed_tv/`. The remux renames per-episode sidecars onto the new `[2160p_hevc_eac3]` stem so Jellyfin keeps matching them.
 
-**Logging**: Dual output (console + `./logs/*.log`), timestamped, emoji status indicators.
+**Logging**: Dual output (console + `$RC_SERVARR_DIR/logs/*.log`, default `/storage/media/servarr/logs/`), timestamped, emoji status indicators.
 
 **Source of truth**: MKV embedded tags are the authoritative identity for each title. For movies, those are the IMDb/TMDB IDs. For TV, each episode carries the show's TVDB/TMDB/IMDb IDs *and* per-episode S/E + episode TMDB ID. NFOs and artwork are derived from those tags and can be regenerated via `maintenance/regenerate_nfos.py`.
 

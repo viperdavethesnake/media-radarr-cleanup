@@ -1,4 +1,4 @@
-import os, subprocess, uuid, sys
+import importlib, os, subprocess, uuid, sys
 import pytest
 from mutagen.flac import FLAC, Picture
 
@@ -55,10 +55,12 @@ def tag_flac(path, n, total, rg_mbid, extra=None, cover=True):
 
 @pytest.fixture
 def stage(tmp_path, monkeypatch):
-    """Scratch CWD laid out like /storage/media/servarr."""
+    """Scratch servarr tree; RC_SERVARR_DIR points music_cleaner at it."""
     for d in ('music', 'logs'):
         (tmp_path / d).mkdir()
-    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv('RC_SERVARR_DIR', str(tmp_path))
+    from music_cleanup import music_cleaner
+    importlib.reload(music_cleaner)
     return tmp_path
 
 

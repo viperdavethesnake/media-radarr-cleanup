@@ -17,7 +17,7 @@ corruption that ffprobe does not surface:
 CPU decode is used deliberately — NVDEC silently conceals slice / reference
 errors. Software decode is the sensitive path.
 
-Outputs (under ./logs/):
+Outputs (under $RC_SERVARR_DIR/logs/, default /storage/media/servarr/logs/):
   - movie_decode_audit_<ts>.log    incremental, human-readable
   - movie_decode_audit_<ts>.jsonl  one JSON result per line, append-as-you-go
   - movie_decode_audit_<ts>.md     markdown summary, written at end
@@ -39,7 +39,7 @@ Usage:
     python3 maintenance/audit_decode_integrity.py /storage/media/movies
     python3 maintenance/audit_decode_integrity.py --limit 5
     python3 maintenance/audit_decode_integrity.py --workers 3 --threads 4
-    python3 maintenance/audit_decode_integrity.py --resume logs/movie_decode_audit_<ts>.jsonl
+    python3 maintenance/audit_decode_integrity.py --resume /storage/media/servarr/logs/movie_decode_audit_<ts>.jsonl
 """
 
 import argparse
@@ -79,7 +79,8 @@ DEFAULT_THREADS  = 4
 # user can SIGINT the run if a single file truly hangs.
 PER_FILE_TIMEOUT = 12 * 60 * 60   # 12 hours
 
-LOG_DIR = Path('./logs')
+SERVARR_DIR = os.getenv('RC_SERVARR_DIR') or os.path.join(os.getenv('RC_MEDIA_BASE', '/storage/media'), 'servarr')
+LOG_DIR = Path(SERVARR_DIR) / 'logs'
 
 
 # ── shutdown / live process tracking ─────────────────────────────────────────
@@ -296,7 +297,7 @@ class IncrementalLog:
     """Thread-safe writer for the per-file log and JSONL stream."""
 
     def __init__(self, log_path: Path, jsonl_path: Path):
-        LOG_DIR.mkdir(exist_ok=True)
+        LOG_DIR.mkdir(parents=True, exist_ok=True)
         self.log_path   = log_path
         self.jsonl_path = jsonl_path
         self.lock       = threading.Lock()

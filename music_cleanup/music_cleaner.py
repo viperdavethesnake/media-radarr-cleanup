@@ -5,7 +5,7 @@ Per album: convert lossless sources (FLAC/APE/WavPack) to ALAC, carry every tag 
 using MusicBrainz Picard's MP4 mapping, verify decoded-PCM equality, remove the source,
 then publish: fix permissions (sudo fix_media_perms.py), move into the music folder, and
 unmonitor + delete the album's track records in Lidarr. Lossy MP3/AAC copy through.
-Run from /storage/media/servarr.
+Stage dirs live under $RC_SERVARR_DIR (default $RC_MEDIA_BASE/servarr = /storage/media/servarr); CWD is irrelevant.
 
   --no-publish     stop at cleaned_music/
   --publish-only   skip cleaning; publish what is already in cleaned_music/
@@ -24,11 +24,12 @@ from mutagen.mp4 import MP4, MP4Cover, MP4FreeForm
 load_dotenv()
 
 # ========== CONFIG =============
-SOURCE_DIR = './music'
-DEST_DIR = './cleaned_music'
-REVIEW_DIR = './review_music'
-FAILED_DIR = './failed_music'
-LOG_DIR = './logs'
+SERVARR_DIR = os.getenv('RC_SERVARR_DIR') or os.path.join(os.getenv('RC_MEDIA_BASE', '/storage/media'), 'servarr')
+SOURCE_DIR = os.path.join(SERVARR_DIR, 'music')
+DEST_DIR = os.path.join(SERVARR_DIR, 'cleaned_music')
+REVIEW_DIR = os.path.join(SERVARR_DIR, 'review_music')
+FAILED_DIR = os.path.join(SERVARR_DIR, 'failed_music')
+LOG_DIR = os.path.join(SERVARR_DIR, 'logs')
 MAX_WORKERS = 4
 FFMPEG = os.getenv('RC_FFMPEG_BIN', 'ffmpeg')
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))

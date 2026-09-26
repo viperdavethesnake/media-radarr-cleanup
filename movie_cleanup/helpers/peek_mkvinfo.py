@@ -2,8 +2,12 @@
 import os
 import random
 import subprocess
+from dotenv import load_dotenv
 
-TAGGED_DIR = './tagged'
+load_dotenv()
+
+SERVARR_DIR = os.getenv('RC_SERVARR_DIR') or os.path.join(os.getenv('RC_MEDIA_BASE', '/storage/media'), 'servarr')
+TAGGED_DIR = os.path.join(SERVARR_DIR, 'tagged')
 N = 5  # Number of random folders to pick
 
 def peek_mkvinfo(movie_dir):

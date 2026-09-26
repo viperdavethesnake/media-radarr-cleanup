@@ -16,12 +16,12 @@ music/  →  cleaned_music/  →  /storage/media/music/   →  Lidarr: unmonitor
             ↘ review_music/
 ```
 
-Run from `/storage/media/servarr` — every path is relative to the CWD, including `./logs`.
-Nothing in the servarr stack triggers it.
+Stage dirs and the log live under `$RC_SERVARR_DIR` (default `$RC_MEDIA_BASE/servarr` =
+`/storage/media/servarr`); the script can be run from any directory. Nothing in the servarr
+stack triggers it.
 
 ```bash
 source /home/david/git/radarr_cleanup/.venv/bin/activate
-cd /storage/media/servarr
 python3 /home/david/git/radarr_cleanup/music_cleanup/music_cleaner.py                 # end to end
 python3 /home/david/git/radarr_cleanup/music_cleanup/music_cleaner.py --no-publish    # stop at cleaned_music/
 python3 /home/david/git/radarr_cleanup/music_cleanup/music_cleaner.py --publish-only  # publish what is in cleaned_music/
@@ -118,6 +118,6 @@ sets the destination root, `RC_MEDIA_OWNER`/`RC_MEDIA_GROUP` the ownership of fo
 script creates, `RC_FFMPEG_BIN` overrides ffmpeg. Paths and `MAX_WORKERS` (4) are edited in
 the script.
 
-Log: `./logs/music_cleaner_debug.log`. `SIGINT`/`SIGTERM` shut down gracefully.
+Log: `$RC_SERVARR_DIR/logs/music_cleaner_debug.log`. `SIGINT`/`SIGTERM` shut down gracefully.
 
 Tests: `python -m pytest music_cleanup/tests` (synthetic FLACs + a fake Lidarr; needs ffmpeg).

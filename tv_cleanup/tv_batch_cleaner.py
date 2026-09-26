@@ -10,11 +10,12 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # ========== CONFIG =============
-SOURCE_DIR = './tvshows'
-DEST_DIR = './tagged_tv'
-REVIEW_DIR = './review_tv'
-FAILED_DIR = './failed_tv'
-LOG_DIR = './logs'
+SERVARR_DIR = os.getenv('RC_SERVARR_DIR') or os.path.join(os.getenv('RC_MEDIA_BASE', '/storage/media'), 'servarr')
+SOURCE_DIR = os.path.join(SERVARR_DIR, 'tvshows')
+DEST_DIR = os.path.join(SERVARR_DIR, 'tagged_tv')
+REVIEW_DIR = os.path.join(SERVARR_DIR, 'review_tv')
+FAILED_DIR = os.path.join(SERVARR_DIR, 'failed_tv')
+LOG_DIR = os.path.join(SERVARR_DIR, 'logs')
 MAX_WORKERS = 4
 TMDB_API_KEY = os.getenv('TMDB_API_KEY', 'your_api_key_here')
 

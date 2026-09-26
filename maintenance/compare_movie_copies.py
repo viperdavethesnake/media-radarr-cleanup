@@ -2,7 +2,7 @@
 """
 Compare two movie libraries and recommend which copy to keep.
 
-PathA (new copies):  /storage/media/servarr/cleaned
+PathA (new copies):  $RC_SERVARR_DIR/cleaned (default /storage/media/servarr/cleaned)
 PathB (older copies): /storage/media/movies,/storage/media/movies2 (default)
 
 PathB accepts multiple comma-separated roots, since the cold-storage migration
@@ -15,7 +15,7 @@ to run filesystem ops and ffprobe/mkvmerge over SSH for that side (same SSH host
 is used for every comma-separated path-b root).
 
 Default run is read-only: prints a side-by-side summary and writes a JSON
-plan to ./logs/compare_plan_<ts>.json.
+plan to $RC_SERVARR_DIR/logs/compare_plan_<ts>.json.
 
 With --apply, HIGH-confidence, imdb-keyed recommendations are executed:
   KEEP NEW      -> fix_media_perms on the new folder, then replace the
@@ -45,10 +45,15 @@ import time
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple
 from xml.etree import ElementTree as ET
+from dotenv import load_dotenv
+
+load_dotenv()
 
 
 # NEW = newly downloaded / newly processed copies (candidate replacements)
-DEFAULT_NEW_PATH = "/storage/media/servarr/cleaned"
+SERVARR_DIR = os.getenv('RC_SERVARR_DIR') or os.path.join(os.getenv('RC_MEDIA_BASE', '/storage/media'), 'servarr')
+DEFAULT_NEW_PATH = os.getenv('RC_CLEANED_DIR') or os.path.join(SERVARR_DIR, 'cleaned')
+LOG_DIR = os.path.join(SERVARR_DIR, 'logs')
 
 # EXISTING = your current library (the stuff you already have).
 # Comma-separated: split across two datasets since the cold-storage migration
@@ -1477,7 +1482,8 @@ def main() -> int:
                 print(f"   - {os.path.basename(e.folder)} :: {_fmt_identity(e)}")
         print()
 
-    plan_path = os.path.join("./logs", f"compare_plan_{time.strftime('%Y%m%d_%H%M%S')}.json")
+    os.makedirs(LOG_DIR, exist_ok=True)
+    plan_path = os.path.join(LOG_DIR, f"compare_plan_{time.strftime('%Y%m%d_%H%M%S')}.json")
     _write_plan_file(
         plan_path,
         args.path_a,

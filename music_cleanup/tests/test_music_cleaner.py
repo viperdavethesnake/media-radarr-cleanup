@@ -1,3 +1,4 @@
+import importlib
 import os
 from mutagen.flac import FLAC
 from mutagen.mp4 import MP4
@@ -177,3 +178,20 @@ def test_missing_lidarr_env_warns_but_publishes(stage, library, monkeypatch):
     run('--skip-perms')
     assert (media / 'music' / 'Test_Artist' / 'Test_Album_(2026)').is_dir()
     assert '[WARN]' in (stage / 'logs' / 'music_cleaner_debug.log').read_text()
+
+
+def test_servarr_dir_from_env(tmp_path, monkeypatch):
+    monkeypatch.setenv('RC_SERVARR_DIR', str(tmp_path))
+    importlib.reload(mc)
+    assert mc.SERVARR_DIR == str(tmp_path)
+    assert mc.SOURCE_DIR == os.path.join(str(tmp_path), 'music')
+    assert mc.LOG_DIR == os.path.join(str(tmp_path), 'logs')
+    assert mc.LIDARR_KEEP_DIR == os.path.join(str(tmp_path), 'music', '.lidarr_keep')
+
+
+def test_servarr_dir_falls_back_to_media_base(tmp_path, monkeypatch):
+    monkeypatch.setenv('RC_SERVARR_DIR', '')
+    monkeypatch.setenv('RC_MEDIA_BASE', str(tmp_path))
+    importlib.reload(mc)
+    assert mc.SERVARR_DIR == os.path.join(str(tmp_path), 'servarr')
+    assert mc.DEST_DIR == os.path.join(str(tmp_path), 'servarr', 'cleaned_music')
