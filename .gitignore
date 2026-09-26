@@ -68,7 +68,7 @@ Thumbs.db
 # Test files (scratch); real pytest suites are un-ignored below
 test_*
 *_test.py
-!music_cleanup/tests/test_*.py
+!*/tests/test_*.py
 
 # Configuration files with sensitive data
 config.ini

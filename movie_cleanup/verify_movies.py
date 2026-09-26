@@ -77,7 +77,7 @@ def log(msg: str) -> None:
     timestamp = time.strftime("[%Y-%m-%d %H:%M:%S]")
     line = f"{timestamp} {msg}"
     print(line)
-    Path(LOG_DIR).mkdir(exist_ok=True)
+    Path(LOG_DIR).mkdir(parents=True, exist_ok=True)
     with open(Path(LOG_DIR) / 'verify_movies_debug.log', 'a', encoding='utf-8') as f:
         f.write(line + '\n')
 
@@ -495,7 +495,7 @@ def main() -> int:
     print(f"{Colors.DIM}━{'━' * 50}{Colors.RESET}\n")
     
     # Create log directory
-    Path(LOG_DIR).mkdir(exist_ok=True)
+    Path(LOG_DIR).mkdir(parents=True, exist_ok=True)
     
     if not Path(args.scan_dir).exists():
         print(f"{Colors.ERROR}❌ Error: Scan directory '{args.scan_dir}' does not exist{Colors.RESET}")
