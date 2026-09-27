@@ -235,8 +235,8 @@ def _discard_partial(dst, dst_folder):
 def process(spec, apply_changes):
     label = spec['folder']
     t0 = time.perf_counter()
+    partial_dst = partial_folder = None
     src_folder = spec['src_folder']
-    dst = dst_folder = None
     try:
         mkvs = [f for f in os.listdir(src_folder) if f.lower().endswith('.mkv')]
         if len(mkvs) != 1:
@@ -274,6 +274,7 @@ def process(spec, apply_changes):
                     'output_name': out_name}
 
         os.makedirs(dst_folder, exist_ok=True)
+        partial_dst, partial_folder = dst, dst_folder
         log(f"▶ {label}: remuxing → {dst}")
         run_mkvmerge(cmd, label)
 
@@ -292,17 +293,17 @@ def process(spec, apply_changes):
                 'size_gb': round(size / 1024**3, 1), 'seconds': round(elapsed)}
 
     except subprocess.TimeoutExpired:
-        _discard_partial(dst, dst_folder)
+        _discard_partial(partial_dst, partial_folder)
         return {'folder': label, 'ok': False,
                 'error': f'mkvmerge exceeded {REMUX_TIMEOUT}s — investigate pool health, do not simply retry'}
     except subprocess.CalledProcessError as e:
-        _discard_partial(dst, dst_folder)
+        _discard_partial(partial_dst, partial_folder)
         if shutdown_requested:
             return {'folder': label, 'ok': False, 'error': 'interrupted', 'interrupted': True}
         detail = ((e.output or '') + (e.stderr or '')).strip()[:400]
         return {'folder': label, 'ok': False, 'error': f'mkvmerge failed: {detail}'}
     except Exception as e:
-        _discard_partial(dst, dst_folder)
+        _discard_partial(partial_dst, partial_folder)
         if shutdown_requested:
             return {'folder': label, 'ok': False, 'error': 'interrupted', 'interrupted': True}
         log(f"❌ {label}: {traceback.format_exc()}")

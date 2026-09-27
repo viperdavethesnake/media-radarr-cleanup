@@ -161,3 +161,34 @@ def test_timeout_removes_partial_file(rf, film, monkeypatch):
     r = rf.process(_spec(src), True)
     assert r['ok'] is False and 'exceeded' in r['error']
     assert not dst_folder.exists()
+
+
+# ── Fix round 1: never discard a file this run did not start writing ─────────
+
+def test_exception_before_mkvmerge_keeps_preexisting_output(rf, film, monkeypatch):
+    src, dst_folder = film
+    dst_folder.mkdir(parents=True)
+    existing = dst_folder / 'Film_(2001)_[1080p_hevc_truehd].mkv'
+    existing.write_bytes(b'old')
+
+    def boom(spec, src, dst):
+        raise RuntimeError('boom')
+    monkeypatch.setattr(rf, 'build_cmd', boom)
+    r = rf.process(_spec(src), True)
+    assert r['ok'] is False and 'boom' in r['error']
+    assert existing.exists()
+    assert existing.read_bytes() == b'old'
+
+
+def test_dry_run_exception_keeps_preexisting_output(rf, film, monkeypatch):
+    src, dst_folder = film
+    dst_folder.mkdir(parents=True)
+    existing = dst_folder / 'Film_(2001)_[1080p_hevc_truehd].mkv'
+    existing.write_bytes(b'old')
+
+    def boom(spec, src, dst):
+        raise RuntimeError('boom')
+    monkeypatch.setattr(rf, 'build_cmd', boom)
+    rf.process(_spec(src), False)
+    assert existing.exists()
+    assert existing.read_bytes() == b'old'
