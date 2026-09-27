@@ -101,7 +101,7 @@ def check_folder(folder_path):
 
 def main():
     parser = argparse.ArgumentParser(description='Audit movie folders for title mismatches')
-    parser.add_argument('scan_dir', nargs='?', default=os.getenv('RC_VERIFY_SCAN_DIR', '/storage/media/movies'),
+    parser.add_argument('scan_dir', nargs='?', default=os.getenv('RC_VERIFY_SCAN_DIR') or os.path.join(os.getenv('RC_MEDIA_BASE', '/storage/media'), 'movies'),
                         help='Directory containing processed movie folders')
     parser.add_argument('--csv', metavar='FILE', help='Write results to CSV')
     args = parser.parse_args()

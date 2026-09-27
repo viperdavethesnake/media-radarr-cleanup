@@ -58,7 +58,8 @@ LOG_DIR = os.path.join(SERVARR_DIR, 'logs')
 # EXISTING = your current library (the stuff you already have).
 # Comma-separated: split across two datasets since the cold-storage migration
 # moved older titles out to movies2.
-DEFAULT_EXISTING_PATH = "/storage/media/movies,/storage/media/movies2"
+_MEDIA_BASE = os.getenv('RC_MEDIA_BASE', '/storage/media')
+DEFAULT_EXISTING_PATH = f"{_MEDIA_BASE}/movies,{_MEDIA_BASE}/movies2"
 
 SIDE_NEW = "NEW"
 SIDE_EXISTING = "EXISTING"

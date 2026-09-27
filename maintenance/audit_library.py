@@ -34,7 +34,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-DEFAULT_SCAN_DIR  = os.getenv('RC_VERIFY_SCAN_DIR', '/storage/media/movies')
+DEFAULT_SCAN_DIR  = os.getenv('RC_VERIFY_SCAN_DIR') or os.path.join(os.getenv('RC_MEDIA_BASE', '/storage/media'), 'movies')
 FFPROBE_BIN       = os.getenv('RC_FFPROBE_BIN', 'ffprobe')
 MAX_WORKERS       = 12
 DEFAULT_TOLERANCE = 5   # minutes

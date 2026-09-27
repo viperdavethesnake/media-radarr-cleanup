@@ -54,7 +54,7 @@ Scripts load configuration from `.env` (not committed; see `.env.example`). All 
 | `TMDB_API_KEY` | Required — TMDB API key |
 | `RC_MEDIA_BASE` | Root path for media storage |
 | `RC_SERVARR_DIR` | Servarr working tree for stage dirs, logs, `nfo_backups/`, compare plans (default `$RC_MEDIA_BASE/servarr`) |
-| `RC_MEDIA_OWNER` / `RC_MEDIA_GROUP` | Ownership for `fix_media_perms.py` (which does **not** call `load_dotenv`, so these only work exported in the shell) and music publish |
+| `RC_MEDIA_OWNER` / `RC_MEDIA_GROUP` | Ownership for `fix_media_perms.py` (carried through its sudo re-exec) and music publish |
 | `RC_VERIFY_SCAN_DIR` | Library scanned by `verify_movies.py`, `audit_decode_integrity.py`, `audit_library.py`, `audit_content_vs_metadata.py`, `audit_title_mismatches.py` |
 | `RC_FFMPEG_BIN`, `RC_FFPROBE_BIN` | Custom FFmpeg locations |
 | `RADARR_URL`, `RADARR_API_KEY`, `RADARR_PROFILE_ID`, `RADARR_ROOT_FOLDER` | `maintenance/radarr_upgrade_push.py` |
@@ -108,9 +108,9 @@ Target conventions for `maintenance/` (the older scripts only partly meet them; 
 - Read-only by default. The destructive flag is `--apply` (`fix_media_perms.py`, `compare_movie_copies.py`), `--run` (`regenerate_nfos.py`, `radarr_upgrade_push.py`) or `--move-bad` (`audit_existing_libraries.py`). `regenerate_nfos.py` requires one of `--audit`/`--run` explicitly.
 - `--json` / `--csv` export and `--limit N` where they make sense (not all scripts have them; `audit_library.py` uses `--out PREFIX` instead).
 - `ThreadPoolExecutor` for I/O-bound scans; only `audit_decode_integrity.py` and `regenerate_nfos.py` install `SIGINT`/`SIGTERM` handlers.
-- Errors accumulate and report at the end. Known exceptions that abort on a single failure: `audit_library.py` / `audit_content_vs_metadata.py` (unreadable folder), `compare_movie_copies.py` / `local_vs_remote_compare.py` (index-phase SSH error), `radarr_upgrade_push.py` (initial movie list fetch).
-- Symlinks are skipped by the `os.walk`-based scripts; the `iterdir`/`isdir`-based audits (`audit_library.py`, `audit_content_vs_metadata.py`, `audit_title_mismatches.py`, `audit_existing_libraries.py`) follow them.
-- `fix_media_perms.py`, `orphaned_*`, `codec_bitrate_report.py` and `audit_existing_libraries.py` do not load `.env` and hardcode `/storage/media` defaults.
+- Errors accumulate and report at the end. The one script that still aborts on a single failure is `radarr_upgrade_push.py` when the initial movie-list fetch fails.
+- Symlinks are skipped in every directory walk.
+- Every script loads `.env`; library defaults derive from `RC_MEDIA_BASE`, the working tree from `RC_SERVARR_DIR`.
 
 `audit_decode_integrity.py` is a long-running CPU-bound audit (full ffmpeg decode of every MKV, multi-day for a large library). It departs from a few defaults by design: no dry-run flag (it's read-only), `--resume <jsonl>` to skip files already recorded as OK/ERRORS/TIMEOUT in a prior run, JSONL appended as each decode completes so partial findings survive interruption, and conservative parallelism tuned to leave Jellyfin headroom (default `--workers 3 --threads 4` = 12 of 20 logical cores on this box). Software decode is intentional — NVDEC silently conceals the HEVC slice / H.264 mmco errors this script exists to find.
 

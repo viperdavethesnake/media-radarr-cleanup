@@ -7,7 +7,11 @@ import json
 import re
 import xml.etree.ElementTree as ET
 
-MOVIES_DIR = '/storage/media/movies'
+from dotenv import load_dotenv
+
+load_dotenv()
+
+MOVIES_DIR = os.path.join(os.getenv('RC_MEDIA_BASE', '/storage/media'), 'movies')
 NUM_SAMPLES = 100
 
 def get_nfo_tags(nfo_path):

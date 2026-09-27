@@ -49,7 +49,7 @@ from compare_movie_copies import (  # noqa: E402
 # ---------------------------------------------------------------------------
 # Defaults (override via CLI args)
 # ---------------------------------------------------------------------------
-DEFAULT_LOCAL_PATH   = "/storage/media/movies"
+DEFAULT_LOCAL_PATH   = os.path.join(os.getenv('RC_MEDIA_BASE', '/storage/media'), 'movies')
 DEFAULT_REMOTE_HOST  = "david@192.168.1.200"
 DEFAULT_REMOTE_PATHS = [
     "/mnt/media1/movies",

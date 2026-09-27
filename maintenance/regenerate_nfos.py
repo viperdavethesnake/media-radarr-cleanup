@@ -41,9 +41,10 @@ load_dotenv()
 
 # ─── Config ──────────────────────────────────────────────────────────────────
 
+MEDIA_BASE = os.getenv('RC_MEDIA_BASE', '/storage/media')
 DEFAULT_SCAN_DIRS = [
-    "/storage/media/movies",
-    "/storage/media/documentaries",
+    os.path.join(MEDIA_BASE, 'movies'),
+    os.path.join(MEDIA_BASE, 'documentaries'),
 ]
 SERVARR_DIR = os.getenv('RC_SERVARR_DIR') or os.path.join(os.getenv('RC_MEDIA_BASE', '/storage/media'), 'servarr')
 LOG_DIR = Path(SERVARR_DIR) / "logs"

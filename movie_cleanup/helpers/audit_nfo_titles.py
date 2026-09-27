@@ -4,7 +4,11 @@ import os
 import re
 import argparse
 
-MOVIES_DIR = '/storage/media/movies'
+from dotenv import load_dotenv
+
+load_dotenv()
+
+MOVIES_DIR = os.path.join(os.getenv('RC_MEDIA_BASE', '/storage/media'), 'movies')
 
 def is_clean_title(title_text):
     # Check for underscores

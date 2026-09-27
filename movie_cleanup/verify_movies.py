@@ -30,7 +30,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # ========== CONFIG =============
-DEFAULT_SCAN_DIR = os.getenv('RC_VERIFY_SCAN_DIR', '/storage/media/movies')
+DEFAULT_SCAN_DIR = os.getenv('RC_VERIFY_SCAN_DIR') or os.path.join(os.getenv('RC_MEDIA_BASE', '/storage/media'), 'movies')
 SERVARR_DIR = os.getenv('RC_SERVARR_DIR') or os.path.join(os.getenv('RC_MEDIA_BASE', '/storage/media'), 'servarr')
 LOG_DIR = os.path.join(SERVARR_DIR, 'logs')
 MAX_WORKERS = 12

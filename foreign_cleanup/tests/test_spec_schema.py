@@ -39,3 +39,10 @@ def test_no_committed_spec_uses_obsolete_keys():
         for entry in json.load(open(p)):
             bad = {'subtitle_srt', 'sub_lang', 'sub_name'} & set(entry)
             assert not bad, f'{p.name}: {entry["folder"]} still uses {sorted(bad)}'
+
+
+def test_scan_library_default_dir_derives_from_media_base(monkeypatch):
+    monkeypatch.setenv('RC_MEDIA_BASE', '/x')
+    monkeypatch.setenv('TMDB_API_KEY', 'x')
+    m = runpy.run_path(str(REPO / 'foreign_cleanup' / 'scan_library_languages.py'), run_name='not_main')
+    assert m['DEFAULT_LIBRARY_DIR'] == '/x/movies'

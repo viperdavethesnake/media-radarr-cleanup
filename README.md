@@ -100,13 +100,10 @@ working tree except to write logs and outputs.
 | `radarr_upgrade_push.py [--compare-output FILE]` | reads saved `compare_movie_copies.py --details` output, adds net-new and high-confidence KEEP NEW titles to Radarr with profile "Mine" and an immediate search | `--run` |
 
 Notes that matter:
-- `fix_media_perms.py` does not read `.env`; `RC_MEDIA_*` must be exported in the shell
-  to take effect, and `sudo` strips them anyway. On the default box the defaults match.
-- `orphaned_*`, `codec_bitrate_report.py` and `audit_existing_libraries.py` hardcode
-  `/storage/media/...` defaults and ignore `RC_MEDIA_BASE`; pass paths explicitly on
-  another host.
-- `audit_library.py`, `audit_content_vs_metadata.py` and `compare_movie_copies.py` abort
-  on an unreadable folder or a failed SSH call during indexing rather than skipping it.
+- `fix_media_perms.py` reads `.env` and passes `RC_MEDIA_*` through its sudo re-exec.
+- Every library default derives from `RC_MEDIA_BASE`; the only literal paths left are
+  the remote `/mnt/media*/movies` defaults in `local_vs_remote_compare.py`, which
+  describe the other machine.
 - `audit_decode_integrity.py` writes a fresh timestamped set of files on every run; after
   several interruptions, pass every prior JSONL to `--resume`.
 
@@ -121,7 +118,7 @@ the repo-root `.env` from any working directory.
 | `RC_MEDIA_BASE` | library root (default `/storage/media`); base for `RC_SERVARR_DIR` and the music destination |
 | `RC_SERVARR_DIR` | working tree (default `$RC_MEDIA_BASE/servarr`) |
 | `RC_MEDIA_OWNER` / `RC_MEDIA_GROUP` | `fix_media_perms.py` (shell-exported only), music publish |
-| `RC_VERIFY_SCAN_DIR` | default scan dir for `verify_movies.py`, `audit_*.py`, `audit_decode_integrity.py` |
+| `RC_VERIFY_SCAN_DIR` | default scan dir for `verify_movies.py`, `audit_*.py`, `audit_decode_integrity.py` (default `$RC_MEDIA_BASE/movies`) |
 | `RC_FFMPEG_BIN` / `RC_FFPROBE_BIN` | non-PATH FFmpeg for music, decode audit, library audits |
 | `RADARR_URL` / `RADARR_API_KEY` / `RADARR_PROFILE_ID` / `RADARR_ROOT_FOLDER` | `radarr_upgrade_push.py` (API key required) |
 | `OPENSUB_API_KEY` | `foreign_cleanup/search_opensubs.py`, `fetch_opensubs.py` |

@@ -64,7 +64,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # ── config ───────────────────────────────────────────────────────────────────
-DEFAULT_SCAN_DIR = os.getenv('RC_VERIFY_SCAN_DIR', '/storage/media/movies')
+DEFAULT_SCAN_DIR = os.getenv('RC_VERIFY_SCAN_DIR') or os.path.join(os.getenv('RC_MEDIA_BASE', '/storage/media'), 'movies')
 FFMPEG_BIN       = os.getenv('RC_FFMPEG_BIN', 'ffmpeg')
 FFPROBE_BIN      = os.getenv('RC_FFPROBE_BIN', 'ffprobe')
 
