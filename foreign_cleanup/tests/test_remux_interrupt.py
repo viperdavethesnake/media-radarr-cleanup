@@ -230,6 +230,30 @@ def test_run_mkvmerge_refuses_to_start_when_flag_set(rf, monkeypatch):
     assert out.stdout.strip() == '', 'sleep 3109 was started despite the flag being set'
 
 
+def test_refusal_before_mkvmerge_keeps_existing_output_and_reports_not_started(rf, film, monkeypatch):
+    # Ctrl-C lands after process()'s entry check but before mkvmerge spawns (during
+    # mkv_identify/TMDB here) — a previously-completed output for this folder must
+    # survive, and the film must be reported as not started, not interrupted.
+    src, dst_folder = film
+    dst_folder.mkdir(parents=True)
+    existing = dst_folder / 'Film_(2001)_[1080p_hevc_truehd].mkv'
+    existing.write_bytes(b'old')
+
+    def identify_then_interrupt(path):
+        rf.shutdown_requested = True
+        return INFO
+    monkeypatch.setattr(rf, 'mkv_identify', identify_then_interrupt)
+    monkeypatch.setattr(rf, 'build_cmd', lambda spec, src, dst: ['sleep', '3111'])
+
+    r = rf.process(_spec(src), True)
+    assert r == {'folder': 'Film_(2001)', 'ok': False, 'error': 'not started', 'not_started': True}
+    assert existing.exists()
+    assert existing.read_bytes() == b'old'
+    assert not rf._live_procs
+    out = subprocess.run(['pgrep', '-f', '^sleep 3111$'], capture_output=True, text=True)
+    assert out.stdout.strip() == '', 'sleep 3111 was started despite the flag being set'
+
+
 # ── Task 3: main loop ────────────────────────────────────────────────────────
 
 def _specs(n):

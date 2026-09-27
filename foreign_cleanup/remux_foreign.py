@@ -299,6 +299,11 @@ def process(spec, apply_changes):
         return {'folder': label, 'ok': True, 'output': dst,
                 'size_gb': round(size / 1024**3, 1), 'seconds': round(elapsed)}
 
+    except InterruptedError:
+        # run_mkvmerge refused to start (flag already set): nothing was written by
+        # this run, so there is nothing to discard — a pre-existing output for this
+        # folder from an earlier completed run must survive untouched.
+        return {'folder': label, 'ok': False, 'error': 'not started', 'not_started': True}
     except subprocess.TimeoutExpired:
         _discard_partial(partial_dst, partial_folder)
         return {'folder': label, 'ok': False,
