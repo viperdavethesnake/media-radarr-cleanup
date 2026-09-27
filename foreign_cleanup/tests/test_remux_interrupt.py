@@ -71,3 +71,93 @@ def test_warning_exit_keeps_output_and_returns(rf):
 def test_fatal_exit_raises(rf):
     with pytest.raises(subprocess.CalledProcessError):
         rf.run_mkvmerge(['sh', '-c', 'exit 2'], 'film')
+
+
+# ── Task 2: cleanup + interrupted result ─────────────────────────────────────
+
+INFO = {'tracks': [
+    {'id': 0, 'type': 'video', 'properties': {}},
+    {'id': 1, 'type': 'audio', 'properties': {'language': 'chi', 'codec_id': 'A_TRUEHD'}},
+]}
+
+
+def _spec(src_folder):
+    return {'folder': 'Film_(2001)', 'src_folder': str(src_folder), 'video': 0,
+            'audio_default': 1, 'output_name': 'Film_(2001)_[1080p_hevc_truehd].mkv'}
+
+
+@pytest.fixture
+def film(rf, tmp_path, monkeypatch):
+    """A source folder with one 'mkv', identify/TMDB stubbed, build_cmd replaced per test."""
+    src = tmp_path / 'foreign' / 'Film_(2001)'
+    src.mkdir(parents=True)
+    (src / 'source.mkv').write_bytes(b'')
+    monkeypatch.setattr(rf, 'mkv_identify', lambda path: INFO)
+    monkeypatch.setattr(rf, 'validate', lambda spec, info: [])
+    dst_folder = tmp_path / 'cleaned' / 'Film_(2001)'
+    return src, dst_folder
+
+
+def _cmd_writing_partial_then(dst_folder, exit_code, sleep=0):
+    """build_cmd stand-in: touch the output file, then either exit with code or block in
+    sleep. `exec` replaces sh with sleep so terminate()/kill() reach the sleeper directly."""
+    def build(spec, src, dst):
+        if sleep:
+            return ['sh', '-c', f'touch "{dst}"; exec sleep {sleep}']
+        return ['sh', '-c', f'touch "{dst}"; exit {exit_code}']
+    return build
+
+
+def test_mkvmerge_failure_removes_partial_file(rf, film, monkeypatch):
+    src, dst_folder = film
+    monkeypatch.setattr(rf, 'build_cmd', _cmd_writing_partial_then(dst_folder, 2))
+    r = rf.process(_spec(src), True)
+    assert r['ok'] is False and 'mkvmerge failed' in r['error']
+    assert not r.get('interrupted')
+    assert not dst_folder.exists()
+
+
+def test_cleanup_keeps_previous_output_in_same_folder(rf, film, monkeypatch):
+    src, dst_folder = film
+    dst_folder.mkdir(parents=True)
+    keep = dst_folder / 'movie.nfo'
+    keep.write_text('<movie/>')
+    monkeypatch.setattr(rf, 'build_cmd', _cmd_writing_partial_then(dst_folder, 2))
+    rf.process(_spec(src), True)
+    assert keep.exists()
+    assert not (dst_folder / 'Film_(2001)_[1080p_hevc_truehd].mkv').exists()
+
+
+def test_interrupt_mid_remux_reports_interrupted_and_cleans(rf, film, monkeypatch):
+    src, dst_folder = film
+    monkeypatch.setattr(rf, 'REMUX_TIMEOUT', 30)
+    monkeypatch.setattr(rf, 'build_cmd', _cmd_writing_partial_then(dst_folder, 0, sleep=30))
+    result = {}
+    t = threading.Thread(target=lambda: result.update(rf.process(_spec(src), True)))
+    t.start()
+    for _ in range(100):
+        if rf._live_procs:
+            break
+        time.sleep(0.02)
+    rf.signal_handler(2, None)
+    t.join(timeout=5)
+    assert result == {'folder': 'Film_(2001)', 'ok': False, 'error': 'interrupted', 'interrupted': True}
+    assert not dst_folder.exists()
+
+
+def test_flag_set_after_success_is_still_ok(rf, film, monkeypatch):
+    src, dst_folder = film
+    monkeypatch.setattr(rf, 'build_cmd', _cmd_writing_partial_then(dst_folder, 0))
+    rf.shutdown_requested = True          # e.g. Ctrl-C during regen_metadata
+    r = rf.process(_spec(src), True)
+    assert r['ok'] is True
+    assert (dst_folder / 'Film_(2001)_[1080p_hevc_truehd].mkv').exists()
+
+
+def test_timeout_removes_partial_file(rf, film, monkeypatch):
+    src, dst_folder = film
+    monkeypatch.setattr(rf, 'REMUX_TIMEOUT', 0.2)
+    monkeypatch.setattr(rf, 'build_cmd', _cmd_writing_partial_then(dst_folder, 0, sleep=30))
+    r = rf.process(_spec(src), True)
+    assert r['ok'] is False and 'exceeded' in r['error']
+    assert not dst_folder.exists()

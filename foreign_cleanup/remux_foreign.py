@@ -221,10 +221,22 @@ def regen_metadata(dst_folder, dst_mkv, meta, poster_url, fanart_url, imdbid, la
     log(f"  {label}: NFO/artwork/tags regenerated from TMDB")
 
 
+def _discard_partial(dst, dst_folder):
+    """Remove the file this run was writing; drop the folder only if it is now empty."""
+    try:
+        if dst and os.path.exists(dst):
+            os.remove(dst)
+        if dst_folder and os.path.isdir(dst_folder) and not os.listdir(dst_folder):
+            os.rmdir(dst_folder)
+    except OSError as e:
+        log(f"  ⚠️ could not remove partial output {dst}: {e}")
+
+
 def process(spec, apply_changes):
     label = spec['folder']
     t0 = time.perf_counter()
     src_folder = spec['src_folder']
+    dst = dst_folder = None
     try:
         mkvs = [f for f in os.listdir(src_folder) if f.lower().endswith('.mkv')]
         if len(mkvs) != 1:
@@ -280,12 +292,19 @@ def process(spec, apply_changes):
                 'size_gb': round(size / 1024**3, 1), 'seconds': round(elapsed)}
 
     except subprocess.TimeoutExpired:
+        _discard_partial(dst, dst_folder)
         return {'folder': label, 'ok': False,
                 'error': f'mkvmerge exceeded {REMUX_TIMEOUT}s — investigate pool health, do not simply retry'}
     except subprocess.CalledProcessError as e:
+        _discard_partial(dst, dst_folder)
+        if shutdown_requested:
+            return {'folder': label, 'ok': False, 'error': 'interrupted', 'interrupted': True}
         detail = ((e.output or '') + (e.stderr or '')).strip()[:400]
         return {'folder': label, 'ok': False, 'error': f'mkvmerge failed: {detail}'}
     except Exception as e:
+        _discard_partial(dst, dst_folder)
+        if shutdown_requested:
+            return {'folder': label, 'ok': False, 'error': 'interrupted', 'interrupted': True}
         log(f"❌ {label}: {traceback.format_exc()}")
         return {'folder': label, 'ok': False, 'error': str(e)}
 
