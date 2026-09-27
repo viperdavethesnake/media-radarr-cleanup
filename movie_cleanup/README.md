@@ -1,281 +1,141 @@
-# 🎬 MKV Processing Pipeline
+# Movie Cleanup Pipeline
 
-**Author:** ViperDavetheSnake (microbarley@gmail.com)
+Three scripts that turn a Radarr download into a Jellyfin-ready movie folder: TMDB
+metadata and embedded tags, then a single-track remux, then a read-only verification of
+the library.
 
-A Python 3.14 pipeline for processing and cleaning MKV files with comprehensive metadata extraction and optimal track selection. This project transforms raw downloaded movies into clean, Jellyfin-ready MKV files with proper metadata, optimal track selection, and file organization.
+Supported runtime: Python 3.13/3.14.
 
-## 🎯 Overview
-
-This pipeline consists of three main processing stages:
-
-1. **Batch Cleaning** (`batch_cleaner.py`) - Downloads metadata from TMDB and applies clean tags to MKV files
-2. **MKV Remuxing** (`mkv_remux_cleanroom.py`) - Creates optimized MKV files with selected tracks only
-3. **Verification** (`verify_movies.py`) - Validates processed movies for Jellyfin compatibility
-
-## 🏗️ Architecture
+## Pipeline
 
 ```
-Raw Movies → [Batch Cleaner] → Tagged MKVs → [Remux Cleanroom] → Jellyfin-Ready → [Verification]
-     ↓               ↓                ↓               ↓               ↓              ↓
-  /movies/       TMDB Lookup       /tagged/       Track Selection   /cleaned/     ✅ Verified
-                 NFO Creation                     Audio/Sub Opts
-                 Poster Download                  Clean Output
+movies/  →  tagged/  →  cleaned/            →  (manual move into /storage/media/movies)
+            ↘ failed/   ↘ failed/
+            ↘ review/   ↘ review/
 ```
 
-## 📁 Directory Structure
-
-```
-movie_cleanup/
-├── movies/                   # Raw downloaded movies (input)
-├── tagged/                   # MKVs with TMDB metadata and tags
-├── cleaned/                  # Final Jellyfin-ready MKV files
-├── failed/                   # Failed processing attempts (incl. foreign-original films)
-├── review/                   # Cases needing human review (multi-video, no acceptable audio)
-├── logs/                     # Processing logs and debug info
-└── helpers/                  # Utility scripts for debugging
-    ├── peek_mkvinfo.py      # Quick MKV structure inspection
-    ├── show_sample_tags.py  # Display generated tags XML
-    └── scan_nfo_for_imdb.py # Scan NFO files for IMDb IDs
-```
-
-Foreign-original films (TMDB `original_language != 'en'`) are **not handled by
-this pipeline** — batch_cleaner routes them to `./failed/`; they are managed by
-separate scripts / manual processes.
-
-## 🛠️ Scripts Overview
-
-### Core Processing Scripts
-
-#### `batch_cleaner.py` - TMDB Metadata Processor
-- **Purpose**: Downloads metadata from TMDB and applies clean tags to MKV files
-- **Workers**: 4 concurrent threads (storage-bound — see CLAUDE.md concurrency notes)
-- **Features**:
-  - TMDB API integration for rich metadata
-  - Downloads high-quality movie posters
-  - Strips existing tags and attachments
-  - Renames files to clean format: `Movie_Title_(Year).mkv`
-  - Generates complete NFO files for Jellyfin
-  - Graceful shutdown handling
-
-#### `mkv_remux_cleanroom.py` - Track Optimizer
-- **Purpose**: Creates clean MKV files with optimal track selection
-- **Workers**: 4 concurrent threads (storage-bound — see CLAUDE.md concurrency notes)
-- **Features**:
-  - Smart audio track selection (TrueHD → DTS-HD → DTS → EAC3 → AC3 → FLAC → AAC → MP3)
-  - English-only audio filtering with commentary exclusion
-  - Intelligent subtitle selection (SRT preferred, excludes SDH/forced)
-  - Removes chapters and attachments for clean output
-  - Preserves essential metadata files for Jellyfin
-
-#### `verify_movies.py` - Jellyfin Compatibility Checker
-- **Purpose**: Validates processed movies for Jellyfin readiness
-- **Features**:
-  - Comprehensive MKV structure analysis
-  - NFO file validation (essential elements check)
-  - Folder naming convention verification
-  - Detailed reporting with pass/fail/warning status
-  - JSON export for detailed analysis
-
-### Utility Scripts (helpers/)
-
-#### `peek_mkvinfo.py` - MKV Structure Inspector
-- **Purpose**: Quick MKV structure inspection for debugging
-- **Usage**: Shows first 30 lines of mkvinfo output for random samples
-
-#### `show_sample_tags.py` - Tag XML Viewer
-- **Purpose**: Displays generated tags XML for verification
-- **Usage**: `python3 show_sample_tags.py [directory] [count]`
-
-#### `scan_nfo_for_imdb.py` - IMDb ID Scanner
-- **Purpose**: Scans NFO files for IMDb IDs and generates reports
-- **Features**: CSV export and comprehensive folder analysis
-
-## 🚀 Installation
-
-### System Dependencies
-```bash
-# Ubuntu/Debian
-sudo apt update
-sudo apt install mkvtoolnix-cli wget
-
-# Verify installation
-mkvmerge --version
-mkvpropedit --version
-mkvinfo --version
-```
-
-### Python Dependencies
-```bash
-# This pipeline uses a small set of Python packages.
-cd /home/david/git/radarr_cleanup
-python3 -m pip install -r requirements.txt
-```
-
-### Multi-server Path Overrides
-Use env vars when server paths differ:
+All stage dirs and logs live under `$RC_SERVARR_DIR` (default `$RC_MEDIA_BASE/servarr` =
+`/storage/media/servarr`). The scripts can be run from any directory.
 
 ```bash
-export RC_SERVARR_DIR="/storage/media/servarr"    # stage dirs + logs (default $RC_MEDIA_BASE/servarr)
-export RC_VERIFY_SCAN_DIR="/storage/media/movies" # library scanned by verify_movies.py
+source /home/david/git/radarr_cleanup/.venv/bin/activate
+python3 /home/david/git/radarr_cleanup/movie_cleanup/batch_cleaner.py
+python3 /home/david/git/radarr_cleanup/movie_cleanup/mkv_remux_cleanroom.py
+python3 /home/david/git/radarr_cleanup/movie_cleanup/verify_movies.py            # scans the library
+python3 /home/david/git/radarr_cleanup/movie_cleanup/verify_movies.py --scan-dir /storage/media/servarr/cleaned
 ```
 
-### Configuration
-```bash
-# Edit TMDB API key in batch_cleaner.py:
-TMDB_API_KEY = 'your_api_key_here'
+`batch_cleaner.py` and `mkv_remux_cleanroom.py` take no flags. Python dependencies are the
+repo's shared set (`requirements.txt`); `TMDB_API_KEY` comes from `.env`.
 
-# Or set as environment variable:
-export TMDB_API_KEY="your_tmdb_api_key_here"
-```
+Foreign-original films (TMDB `original_language != 'en'`) are **not handled here**:
+stage 1 routes them to `failed/` and `foreign_cleanup/` takes over.
 
-**Note:** Get your TMDB API key from [The Movie Database](https://www.themoviedb.org/settings/api)
+### Stage 1 — `batch_cleaner.py`
 
-## 📖 Usage
+Reads each non-hidden subfolder of `movies/`, writes `tagged/<Title>_(Year)/`. 4 workers.
 
-### Complete Pipeline (Recommended)
-```bash
-# Step 1: Process raw movies with TMDB metadata
-python3 batch_cleaner.py
+- Exactly one video file per source folder. More than one → `review/`; none, or an `.mp4`
+  → `failed/` (MP4 sources are not accepted).
+- IMDb id (`tt` + 6–9 digits) is looked for in the filename, then `movie.nfo`
+  `<uniqueid type="imdb">`, then anywhere in the NFO text. No id → `failed/`.
+- TMDB `/find` must return a movie (a TV-only match fails), then `/movie/{id}` with
+  credits, collection and release dates. `original_language != 'en'` → `failed/`.
+- Copies the MKV with `cp --reflink=auto`, deletes every attachment with `mkvpropedit`,
+  and replaces all embedded tags (`--tags all:`) with a fresh set: TITLE, YEAR, DIRECTOR,
+  GENRE, IMDB, TMDB, PLOT, and COLLECTION / COLLECTION_ID when the film is in a set.
+  Chapters are left alone at this stage.
+- Writes `movie.nfo` (title, originaltitle, sorttitle, year, premiered, plot, tagline,
+  runtime, US mpaa, TMDB rating/votes, tmdb + imdb uniqueids, genres, studios, directors,
+  top-8 cast, countries, set), `metadata.json` (raw TMDB response), `tags.xml`,
+  `poster.jpg` and `fanart.jpg`. A failed artwork download fails the film.
+- Two sources resolving to the same output name in one run → the second goes to `review/`.
+- Any error deletes the partial `tagged/` folder and moves the source to `failed/`. On
+  success the source folder is deleted.
 
-# Step 2: Optimize tracks and create Jellyfin-ready files
-python3 mkv_remux_cleanroom.py
+Folder and file names are `Title_(Year)`: `\ / : * ? " < > |` and `.` are removed, spaces
+become `_`. The IMDb id lives in the embedded tags, not the filename.
 
-# Step 3: Verify everything is Jellyfin-compatible
-python3 verify_movies.py --scan-dir ./cleaned
-```
+### Stage 2 — `mkv_remux_cleanroom.py`
 
-### Individual Script Usage
-```bash
-# Batch processing
-python3 batch_cleaner.py  # 4 workers, fixed
+Reads `tagged/`, writes `cleaned/<same folder name>/`. 4 workers, 3600 s per remux.
 
-# Remuxing
-python3 mkv_remux_cleanroom.py  # 4 workers, fixed
+- Keeps one video, one audio, at most one subtitle. `--no-chapters --no-attachments`.
+  Global tags survive the remux, so the embedded identity is preserved.
+- **Audio**: English or `und` preferred; commentary and audio-description tracks
+  (by name or `flag_commentary`) are excluded. Codec priority TrueHD > DTS-HD/MA > DTS >
+  EAC3 > AC3 > FLAC > AAC > MP3. If no English/`und` track exists it falls back to the
+  best non-junk track of any language and keeps that language tag; `verify_movies.py`
+  will then flag it. English/`und` tracks are relabelled `eng`.
+- **Subtitles**: text formats only (SRT preferred, then ASS/SSA; PGS/VobSub are never
+  kept), English/`und`, not SDH/HI/forced/commentary by name or flag. The kept track is
+  set `eng` and non-default.
+- Output name `Title_(Year)_[<res>p_<vcodec>_<acodec>].mkv`. Resolution is classified by
+  width first (so cropped scope releases still read `2160`/`1080`); unknown codecs fall
+  back to `unknown`.
+- Only `movie.nfo`, `poster.jpg` and `fanart.jpg` are copied alongside. `metadata.json`
+  and `tags.xml` stay behind and are deleted with the tagged folder.
+- More than one MKV, more than one video track, or no acceptable audio at all →
+  `review/`. mkvmerge error, timeout, or any other exception → `failed/` (partial output
+  removed). mkvmerge warnings (exit 1) are logged and the output kept.
 
-# Verification with different directory
-python3 verify_movies.py --scan-dir /path/to/movies --threads 16
+### Stage 3 — `verify_movies.py`
 
-# Save verification results to JSON
-python3 verify_movies.py --output results.json
-```
+Read-only. Scans every subfolder of `--scan-dir` (default `$RC_VERIFY_SCAN_DIR` =
+`/storage/media/movies`, the library) and reports PASSED / WARNING / FAILED / ERROR.
+Nothing is moved.
 
-### Utility Usage
-```bash
-# Debug and analysis tools
-python3 helpers/peek_mkvinfo.py
-python3 helpers/show_sample_tags.py ./tagged 5
-python3 helpers/scan_nfo_for_imdb.py
-```
+| Flag | Default | Meaning |
+|---|---|---|
+| `--scan-dir` | `$RC_VERIFY_SCAN_DIR` | directory of movie folders to check |
+| `--threads` | 12 | worker threads (read-only, so higher than the pipeline's 4) |
+| `--output FILE` | — | write detailed JSON results |
+| `--quiet` / `-q` | — | hide the progress bar |
 
-## ⚙️ Configuration
+A folder **fails** on any of: folder name not `Title_(Year)` (year 1900–2030); first MKV
+has ≠1 video track, >1 audio, >1 subtitle, any attachments, any chapters, zero global tags,
+or a first audio track that is not English (`und` counts as not English); missing
+`movie.nfo` or `poster.jpg`; NFO root not `<movie>` or missing title/year/imdbid/tmdbid.
+Leftover `metadata.json` / `tags.xml` is a warning only. Exit code is 1 when anything
+FAILED or ERRORed, else 0.
 
-### Audio Track Priority
-The system selects audio tracks in this order:
-1. **TrueHD** (highest quality)
-2. **DTS-HD** (Master Audio / High Resolution)
-3. **DTS**
-4. **EAC3** (Dolby Digital Plus)
-5. **AC3** (Dolby Digital)
-6. **FLAC**
-7. **AAC**
-8. **MP3** (lowest priority)
+It is the **English-pipeline gate**: foreign_cleanup outputs staged in `cleaned/` keep
+chapters and original-language audio by design and will show FAILED. That is expected
+noise, not a defect. Never auto-move flagged folders.
 
-### Track Filtering Rules
-- **Audio**: English only, excludes commentary, director interviews
-- **Subtitles**: English only, excludes SDH, forced, commentary tracks
-- **Video**: Single video track required (multiple tracks moved to review)
+## Helpers (`helpers/`)
 
-### File Naming Convention
-```
-Movie_Title_(Year)_[2160p_hevc_eac3].mkv    inside    Movie_Title_(Year)/
-```
-- Special characters removed except spaces, hyphens, parentheses, ampersands
-- Spaces replaced with underscores
-- Technical suffix added at remux; the IMDb ID lives in the embedded MKV tags, not the filename
+None are part of the pipeline; all are single-threaded spot-check tools.
 
-## 🔧 Advanced Features
+| Script | What it does |
+|---|---|
+| `peek_mkvinfo.py` | first 30 lines of `mkvinfo` for the first MKV in 5 random `tagged/` folders |
+| `spot_check_movies.py` | compares NFO title/year/ids/plot/genre against the MKV's tags via `mediainfo --Output=JSON` for 100 random library folders |
+| `audit_nfo_titles.py` | flags `movie.nfo` titles that still contain `_` or a trailing `(YYYY)` |
+| `fix_nfo_titles.py` | rewrites those titles in place; dry-run unless `--apply` |
+| `scan_nfo_for_imdb.py` | walks the **current directory** and writes `imdb_scan_report.csv` of IMDb ids found in NFOs |
 
-### Concurrent Processing
-- `batch_cleaner.py` and `mkv_remux_cleanroom.py`: **4 workers, fixed** — both
-  stages are storage-bound against the shared ZFS pool; more workers make them
-  slower, not faster (see CLAUDE.md for the full rationale and incident history)
-- Graceful shutdown handling with signal management
+`spot_check_movies.py`, `audit_nfo_titles.py` and `fix_nfo_titles.py` are hardcoded to
+`/storage/media/movies`.
 
-### Error Handling
-- **Non-critical failures**: Poster embedding failures don't break processing
-- **Failed files**: Moved to `./failed/` directory for manual review
-- **Review files**: Moved to `./review/` for cases requiring manual intervention
-- **Comprehensive logging**: Detailed error messages with emoji indicators
+## Configuration
 
-### Metadata Extraction
-Extracts and preserves:
-- **Basic Info**: Title, year, director, writer, studio, plot
-- **Identifiers**: IMDB, TMDB, TVDB IDs
-- **Ratings**: IMDB, TMDB, Rotten Tomatoes scores
-- **Media**: Poster URL, fanart URL, trailer URL
-- **Actors**: Name, role, order, thumbnail
-- **Classification**: Genres, countries, MPAA rating
+| Variable | Used by | Default |
+|---|---|---|
+| `TMDB_API_KEY` | batch_cleaner | required |
+| `RC_SERVARR_DIR` | all three + peek_mkvinfo | `$RC_MEDIA_BASE/servarr` |
+| `RC_MEDIA_BASE` | fallback for the above | `/storage/media` |
+| `RC_VERIFY_SCAN_DIR` | verify_movies | `/storage/media/movies` |
 
-## 🐛 Troubleshooting
+`MAX_WORKERS` (4 in both pipeline stages) is edited in the scripts. It is deliberately
+low: both stages are storage-bound against the shared ZFS pool and more workers make them
+slower, not faster (see the concurrency note in the root `CLAUDE.md`).
 
-### Common Issues
+Logs: `$RC_SERVARR_DIR/logs/batch_cleaner_debug.log`, `remux_cleanroom_debug.log`,
+`verify_movies_debug.log`. The pipeline scripts handle `SIGINT`/`SIGTERM`: the first
+signal stops dispatching new work and force-exits with code 1 three seconds later.
 
-**"No movie.nfo found"**
-- Ensure each movie folder contains a `movie.nfo` file
-- Check file permissions and encoding
+System dependencies: MKVToolNix (`mkvmerge`, `mkvpropedit`, `mkvinfo`); `mediainfo` for
+`spot_check_movies.py` only.
 
-**"mkvmerge failed"**
-- Verify MKVToolNix installation: `mkvmerge --version`
-- Check MKV file integrity
-- Ensure sufficient disk space
-
-**"Multiple video tracks"**
-- Files with multiple video tracks are moved to `./review/`
-- Manual intervention required for these cases
-
-**"No acceptable English audio"**
-- Files without suitable English audio moved to `./review/`
-- Check audio track language tags
-
-### Debug Tools
-```bash
-# Check track structure
-python3 test_mkv_tracks.py
-
-# Verify tags generation
-python3 show_sample_tags.py ./tagged
-
-# Inspect MKV structure
-python3 peek_mkvinfo.py
-```
-
-## 📊 Processing Status Indicators
-
-- ✅ **Success**: File processed successfully
-- ❌ **Error**: Processing failed, file moved to `./failed/`
-- ⏳ **Processing**: Currently being processed
-- ⏩ **Review**: Requires manual review, moved to `./review/`
-
-## 🤝 Contributing
-
-1. Fork the repository
-2. Create a feature branch
-3. Test thoroughly with various MKV/NFO combinations
-4. Ensure error handling is robust
-5. Submit a pull request
-
-## 📝 License
-
-This project is open source. Feel free to modify and distribute as needed.
-
-## 🆘 Support
-
-For issues and questions:
-- Check the troubleshooting section above
-- Review error messages carefully
-- Use the debug tools to analyze problematic files
-- Ensure all system dependencies are properly installed
-
----
-
-**Note**: This pipeline is designed for personal use with downloaded media. Ensure you have proper rights to process the media files you're working with.
+Tests: `python -m pytest movie_cleanup/tests` (currently covers log-dir resolution only).

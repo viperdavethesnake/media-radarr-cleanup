@@ -9,15 +9,15 @@ Supported runtime: Python 3.13/3.14.
 
 ```
 tvshows/  →  tagged_tv/  →  cleaned_tv/
-              ↘ failed_tv/   ↘ failed_tv/
-              ↘ review_tv/   ↘ review_tv/
+              ↘ failed_tv/   ↘ review_tv/
+              ↘ review_tv/
 ```
 
-Both stages are run from `/storage/media/servarr` — every path in the scripts is
-relative to the CWD, including `./logs`.
+All stage dirs and logs live under `$RC_SERVARR_DIR` (default `$RC_MEDIA_BASE/servarr` =
+`/storage/media/servarr`). The scripts take no flags and can be run from any directory.
 
 ```bash
-cd /storage/media/servarr
+source /home/david/git/radarr_cleanup/.venv/bin/activate
 python3 /home/david/git/radarr_cleanup/tv_cleanup/tv_batch_cleaner.py
 python3 /home/david/git/radarr_cleanup/tv_cleanup/tv_mkv_remux_cleanroom.py
 ```
@@ -26,7 +26,7 @@ Python dependencies are the repo's shared set (`requirements.txt`).
 
 ### Stage 1 — `tv_batch_cleaner.py`
 
-Reads `./tvshows/`, writes `./tagged_tv/`.
+Reads `tvshows/`, writes `tagged_tv/`. 4 workers, one show per job.
 
 - Resolves the show via the `[tvdbid-N]` in Sonarr's folder name, an IMDb id in the
   folder name, or a `uniqueid` in the source `tvshow.nfo` — in that order.
@@ -35,30 +35,33 @@ Reads `./tvshows/`, writes `./tagged_tv/`.
   `.nfo`, and injects identity tags with `mkvpropedit`.
 - Downloads artwork fresh from TMDB. Sonarr's own artwork is **not** carried over —
   the source folder is deleted, and clean copies are re-fetched:
-  `poster.jpg`, `fanart.jpg`, `logo.png` (English PNG, highest-voted; `.svg` logos are
-  skipped because Jellyfin cannot read them), `seasonNN-poster.jpg`
+  `poster.jpg`, `fanart.jpg`, `logo.png` (English or language-neutral PNG, highest-voted;
+  `.svg` logos are skipped because Jellyfin cannot read them), `seasonNN-poster.jpg`
   (`season-specials-poster.jpg` for season 0), and a per-episode `-thumb.jpg`.
-  Artwork failures are logged and non-fatal.
+  Artwork download failures are logged and non-fatal; failing to write `tvshow.nfo` or
+  `metadata.json` is fatal for the show.
 - Deletes the source folder only when **every** episode succeeded.
 
 **Episode detection is `SxxExx` only.** `1x02`, `Season 1 Episode 2` and `1.02` are
-*not* recognised. A file with no `SxxExx` falls back to its parent `Season NN` /
-`Specials` directory; if neither resolves, the file is moved to
-`review_tv/<source folder>/` and the show is marked partial.
+*not* recognised. A file with no `SxxExx` in its name fails (it stays in the source);
+the parent `Season NN` / `Specials` directory only supplies the season number. A file
+whose season cannot be determined at all is moved to `review_tv/<source folder>/`.
+Either way the show is marked partial.
 
 Rejected, by design:
 
 | Condition | Outcome |
 |---|---|
-| No TVDB/IMDb id, or no video files | whole show → `failed_tv/` |
+| No TVDB/IMDb id, no video files, or the TMDB lookup fails | whole show → `failed_tv/` |
 | TMDB `original_language != 'en'` | whole show → `failed_tv/` (foreign shows are not handled here) |
+| Any other exception while processing the show | source → `failed_tv/`, partial output → `failed_tv/<source>_cleaned_partial` |
 | Multi-episode file (`S01E01E02`, `S01E01-E02`) | episode fails — split it manually |
 | `.mp4` source | episode fails — needs manual handling |
 | Season undeterminable | file → `review_tv/`, episode counted as failed |
 | Two sources resolving to the same output name | second one fails |
 
-On any failure the partially-cleaned output is parked at
-`failed_tv/<name>_cleaned_partial` and the source is kept for a re-run —
+When some episodes fail, the partially-cleaned output is parked at
+`failed_tv/<source folder>_cleaned_partial` and the source is kept for a re-run —
 `tagged_tv/` must only ever hold complete shows, because stage 2 publishes whatever
 it finds there.
 
@@ -68,7 +71,7 @@ presence proves the episode finished).
 
 ### Stage 2 — `tv_mkv_remux_cleanroom.py`
 
-Reads `./tagged_tv/`, writes `./cleaned_tv/`.
+Reads `tagged_tv/`, writes `cleaned_tv/`. 4 workers, one episode per job, 3600 s per remux.
 
 - Keeps one video, one audio, at most one subtitle track.
 - **Audio**: English (or `und`) preferred, commentary and audio-description excluded.
@@ -80,7 +83,10 @@ Reads `./tagged_tv/`, writes `./cleaned_tv/`.
   episodic content the markers drive intro/recap skip in Jellyfin and Infuse.
   `verify_movies.py` (which fails surviving chapters) never scans `cleaned_tv/`.
 - Global tags survive the remux, so embedded identity is preserved.
-- `>1 video track` or no acceptable audio → that episode moves to `review_tv/`.
+- `>1 video track` or no acceptable audio → that episode (with its `.nfo` and
+  `-thumb.jpg`) moves to `review_tv/<show>/<Season NN>/`. mkvmerge errors and timeouts
+  leave the episode in `tagged_tv/` with the partial output removed; stage 2 never
+  writes to `failed_tv/`.
 - Per-episode `.nfo` and `-thumb.jpg` are renamed onto the new output stem so Jellyfin
   keeps matching them; show-level sidecars (`tvshow.nfo`, `metadata.json`, `poster.jpg`,
   `fanart.jpg`, `logo.png`, `seasonNN-poster.jpg`) are copied at finalize.
@@ -121,10 +127,11 @@ cleaned_tv/
 
 ## Configuration
 
-`TMDB_API_KEY` comes from `.env`. Paths, `MAX_WORKERS` (4 — the pool is storage-bound;
-see the concurrency note in the root `CLAUDE.md`) and the audio/subtitle preference
-tables are edited in the scripts.
+`TMDB_API_KEY` comes from `.env`. `RC_SERVARR_DIR` (default `$RC_MEDIA_BASE/servarr`)
+locates the stage dirs and logs. `MAX_WORKERS` (4 — the pool is storage-bound; see the
+concurrency note in the root `CLAUDE.md`) and the audio/subtitle preference tables are
+edited in the scripts.
 
-Logs: `./logs/tv_batch_cleaner_debug.log`, `./logs/tv_remux_cleanroom_debug.log`.
+Logs: `$RC_SERVARR_DIR/logs/tv_batch_cleaner_debug.log` and `tv_remux_cleanroom_debug.log`.
 Both scripts handle `SIGINT`/`SIGTERM` for graceful shutdown; a partial output left by
 a hard kill is detected and redone on the next run.

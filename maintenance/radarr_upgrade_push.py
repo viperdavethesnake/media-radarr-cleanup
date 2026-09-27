@@ -10,8 +10,8 @@ Sources:
 Both lists come from compare_movie_copies.py output.
 
 Usage:
-    python3 maintenance/radarr_upgrade_push.py --dry-run   # preview
-    python3 maintenance/radarr_upgrade_push.py             # run
+    python3 maintenance/radarr_upgrade_push.py             # preview (dry-run is the default)
+    python3 maintenance/radarr_upgrade_push.py --run       # add to Radarr + search
 """
 
 from __future__ import annotations

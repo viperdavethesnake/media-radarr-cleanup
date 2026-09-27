@@ -4,7 +4,7 @@ Compare local movie library against one or more remote paths on the same SSH hos
 
 Differences from compare_movie_copies.py:
   - Local side is always the NEW side (no --ssh-a)
-  - Remote side accepts multiple paths (merged into one index)
+  - No ffprobe/quality comparison, no recommendation, no plan file, no --apply
   - Local movies are classified as Movie or Documentary via NFO <genre> tags
   - Simpler output focused on "what do I have that remote doesn't"
 

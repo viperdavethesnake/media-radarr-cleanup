@@ -58,15 +58,19 @@ Rejected, by design:
 | Condition | Outcome |
 |---|---|
 | Artist or album folder lacks `[mbid-<uuid>]` | album → `failed_music/` |
-| No audio, unreadable tags, OGG/Opus/WMA/WAV/other codec | album → `failed_music/` |
-| ffmpeg error, PCM hash or tag mismatch | album → `failed_music/` (partial output removed) |
-| Any file missing `musicbrainz_releasegroupid`, or it differs from the folder mbid | album → `review_music/` |
-| Files on disk ≠ `tracktotal` (summed per disc) | album → `review_music/` |
+| No audio, unreadable/absent tags (lossy too), OGG/Opus/WMA/WAV/other codec | album → `failed_music/` |
+| ffmpeg error, PCM hash or tag mismatch, output count ≠ source count | album → `failed_music/` (partial output removed) |
+| Lossless only: any file missing `musicbrainz_releasegroupid`, or it differs from the folder mbid | album → `review_music/` |
+| Lossless only: files on disk ≠ `tracktotal` (summed per disc) | album → `review_music/` |
 | Mixed codecs within an album | album → `review_music/` |
 | Destination album already exists in `cleaned_music/` | `[SKIP]`, source left in place |
 
-Re-runs are resumable: an existing `cleaned_music/` album is trusted (and the source
-removed) only if every `.m4a` opens and its `MusicBrainz Track Id` equals the source's.
+The release-group and track-count checks run only for converted (lossless) albums;
+MP3/AAC copy-through albums skip them.
+
+Re-runs are resumable for converted albums: an existing `cleaned_music/` album is trusted
+(and the source removed) only if every `.m4a` opens and its `MusicBrainz Track Id` equals
+the source's. A copy-through album whose destination exists is always `[SKIP]`ped.
 
 ### Publish: `cleaned_music/` → `/storage/media/music/`
 
@@ -74,20 +78,25 @@ Runs per album right after a successful clean (or for everything in `cleaned_mus
 with `--publish-only`).
 
 1. Refuses to overwrite: an existing target album is `[SKIP]`ped and stays in `cleaned_music/`.
-2. `sudo -n maintenance/fix_media_perms.py --apply` on the cleaned album
-   (`david:media`, dirs 2775, files 664, ACLs stripped).
+2. `sudo -n <venv python> maintenance/fix_media_perms.py --apply <album>` (no sudo when
+   already root): `$RC_MEDIA_OWNER:$RC_MEDIA_GROUP` (default `david:media`), dirs 2775,
+   files 664, ACLs stripped.
 3. Moves the album into the artist folder under the destination; removes the emptied
    `cleaned_music/<Artist>` folder.
-4. Lidarr handoff (skipped by `--no-lidarr`, or with a `[WARN]` if `LIDARR_URL` /
-   `LIDARR_API_KEY` are unset or the album is unknown to Lidarr): looks the album up by
-   its release-group id, sets `monitored=false`, then deletes its track-file records
-   (`DELETE /api/v1/trackfile/bulk`) so Lidarr neither re-downloads it nor believes the
-   files still exist.
+4. Lidarr handoff (skipped by `--no-lidarr`; a `[WARN]` and no call if `LIDARR_URL` /
+   `LIDARR_API_KEY` are unset, the files carry no release-group id, or the album is
+   unknown to Lidarr): `GET /api/v1/album?foreignAlbumId=<rg>`, `PUT /api/v1/album/{id}`
+   with `monitored=false` if it was monitored, then `DELETE /api/v1/trackfile/bulk` for
+   its track-file records so Lidarr neither re-downloads it nor believes the files still
+   exist. A Lidarr error is logged after the album has already moved.
 
 Lidarr refuses that delete with HTTP 409 "root folder is empty" when its root has no
 subdirectories (an unmounted-drive guard; its own delete-empty-folders setting removes
 the artist folder mid-operation), so the script keeps a permanent placeholder directory
-`./music/.lidarr_keep`. Do not remove it.
+`$RC_SERVARR_DIR/music/.lidarr_keep`, created on the first handoff. Do not remove it.
+
+If the destination library directory does not exist, a publishing run aborts before
+cleaning anything.
 
 ## Naming
 
@@ -113,10 +122,10 @@ the `_[mbid-…]` folder tokens.
 
 ## Configuration
 
-`LIDARR_URL` and `LIDARR_API_KEY` come from `.env` (see `.env.example`). `RC_MEDIA_BASE`
-sets the destination root, `RC_MEDIA_OWNER`/`RC_MEDIA_GROUP` the ownership of folders the
-script creates, `RC_FFMPEG_BIN` overrides ffmpeg. Paths and `MAX_WORKERS` (4) are edited in
-the script.
+`LIDARR_URL` and `LIDARR_API_KEY` come from `.env` (see `.env.example`). `RC_SERVARR_DIR`
+locates the stage dirs and log, `RC_MEDIA_BASE` sets the destination root,
+`RC_MEDIA_OWNER`/`RC_MEDIA_GROUP` the ownership applied at publish, `RC_FFMPEG_BIN`
+overrides ffmpeg. `MAX_WORKERS` (4) is edited in the script.
 
 Log: `$RC_SERVARR_DIR/logs/music_cleaner_debug.log`. `SIGINT`/`SIGTERM` shut down gracefully.
 

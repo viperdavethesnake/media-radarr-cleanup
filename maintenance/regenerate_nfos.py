@@ -4,8 +4,8 @@ Regenerate movie.nfo, poster.jpg, and fanart.jpg from TMDB for all movies
 and documentaries. Uses MKV embedded tags as the authoritative source of
 movie identity (TMDB ID / IMDB ID).
 
-Existing NFOs are backed up before deletion. Posters are always refreshed.
-fanart.jpg (backdrop) is downloaded fresh — it has never been stored locally.
+With --run, existing NFOs are backed up to $RC_SERVARR_DIR/nfo_backups/ before
+deletion and poster.jpg / fanart.jpg are re-downloaded. --audit only reports.
 
 Usage:
   python3 regenerate_nfos.py --audit                  # Dry-run report only

@@ -1,206 +1,137 @@
-# Radarr Cleanup Tools
+# radarr_cleanup
 
-A collection of tools for managing and optimizing movie and TV collections.
+Scripts that turn Radarr/Sonarr/Lidarr downloads into clean, tagged, Jellyfin-ready
+media, plus maintenance tools for the resulting libraries. Personal tooling for one
+ZFS-backed media server; paths default to that box and are overridable via `.env`.
 
-## 📁 Repository Structure
+## Layout
 
 ```
 radarr_cleanup/
-├── movie_cleanup/              # MKV processing and metadata tools for Movies
-│   ├── batch_cleaner.py        # Extract metadata, clean names, inject tags
-│   ├── mkv_remux_cleanroom.py  # Track selection and remuxing (tagged/ -> cleaned/; foreign films are foreign_cleanup/'s job)
-│   ├── helpers/                # Helper scripts and utilities
-│   └── README.md               # Detailed documentation
-├── maintenance/                # Operational maintenance scripts for media libraries
-│   ├── fix_media_perms.py       # Strip ACLs + enforce david:media + consistent perms
-│   ├── orphaned_metadata_cleanup.py # Report-only: movie/doc folder completeness + leftovers
-│   ├── orphaned_tv_metadata_report.py # Report-only: TV show folder completeness
-│   ├── codec_bitrate_report.py  # Read-only: codec/resolution/bitrate report (ffprobe/mediainfo)
-│   ├── audit_existing_libraries.py  # Audit Radarr vs filesystem library state
-│   ├── compare_movie_copies.py  # Compare movie copies across libraries
-│   └── regenerate_nfos.py       # Regenerate NFOs + artwork from TMDB via MKV tags
-├── tv_cleanup/                 # Tools for TV Show management
-│   ├── tv_batch_cleaner.py     # TV show metadata and cleaning
-│   ├── tv_mkv_remux_cleanroom.py # TV show remuxing
-│   └── README.md               # TV cleanup documentation
-├── music_cleanup/              # Music pipeline (Lidarr → ALAC → /storage/media/music)
-│   ├── music_cleaner.py        # FLAC/APE/WV → ALAC, tag carry-over, verify, publish, Lidarr handoff
-│   └── README.md               # Music cleanup documentation
-└── README.md                   # This file
+├── movie_cleanup/      batch_cleaner.py → mkv_remux_cleanroom.py → verify_movies.py  (+ helpers/)
+├── tv_cleanup/         tv_batch_cleaner.py → tv_mkv_remux_cleanroom.py
+├── music_cleanup/      music_cleaner.py (Lidarr → ALAC → library → Lidarr handoff)
+├── foreign_cleanup/    spec-driven pipeline for non-English-original films (PIPELINE.md)
+├── maintenance/        library audits, comparisons, permissions, NFO regeneration, Radarr push
+├── docs/superpowers/   design specs and implementation plans
+├── .env.example        every variable the scripts read
+└── requirements.txt    requests, python-dotenv, mutagen
 ```
 
-## 🎬 Collection Management
+Each folder has its own README (`foreign_cleanup/PIPELINE.md`) with stage-by-stage
+detail. `CLAUDE.md` holds the conventions and the reasoning behind them.
 
-### Movie Processing (`movie_cleanup/`)
-Tools for processing existing Movie MKV files:
-- **Metadata Extraction**: From NFO files and TMDB API
-- **Name Cleaning**: Standardize folder and file names
-- **Tag Injection**: Add collection and metadata tags
-- **Track Selection**: Choose best audio/subtitle tracks
-- **Remuxing**: Create clean, optimized MKV files
+## Working tree
 
-### TV Processing (`tv_cleanup/`)
-Tools for processing TV Show files:
-- **Episode Cleaning**: Standardize episode naming
-- **Batch Processing**: Handle entire seasons or series
-- **Remuxing**: Optimize tracks for TV episodes
+Every pipeline script reads and writes stage folders under one base directory:
 
-### Music Processing (`music_cleanup/`)
-Tools for processing albums imported by Lidarr:
-- **ALAC Conversion**: FLAC/APE/WavPack → Apple Lossless, bit depth and rate preserved
-- **Tag Carry-over**: MusicBrainz Picard MP4 mapping, all MusicBrainz ids and cover art
-- **Verification**: decoded-PCM hash equality and tag read-back before the source is removed
-- **Publish**: permissions, move to `/storage/media/music`, unmonitor + drop records in Lidarr (`--no-publish` to stop early)
+```
+$RC_SERVARR_DIR  (default $RC_MEDIA_BASE/servarr = /storage/media/servarr)
+├── movies/ tagged/ cleaned/ review/ failed/            movie pipeline
+├── tvshows/ tagged_tv/ cleaned_tv/ review_tv/ failed_tv/   TV pipeline
+├── music/ cleaned_music/ review_music/ failed_music/   music pipeline
+├── foreign/                                            foreign-film sources
+├── logs/                                               every script's log, compare plans, audits
+└── nfo_backups/                                        regenerate_nfos.py backups
+```
 
-### Maintenance (`maintenance/`)
-Operational scripts for keeping the Jellyfin libraries healthy.
+Scripts can be run from any directory. Final libraries live under `$RC_MEDIA_BASE`
+(`/storage/media/{movies,movies2,documentaries,tvshows,music}`); moving `cleaned/` into
+the library is a manual step.
 
-#### `fix_media_perms.py`
-- **What it does**: Strips ACLs first, then enforces ownership `david:media` and perms (dirs `2775`, files `664`) on:
-  - `/storage/media/movies`
-  - `/storage/media/documentaries`
-  - `/storage/media/music`
-  - `/storage/media/tvshows`
-- **Usage**:
+## Setup
 
 ```bash
-./maintenance/fix_media_perms.py           # dry-run
-./maintenance/fix_media_perms.py --apply   # apply (auto-sudo)
+cd /home/david/git/radarr_cleanup
+python3 -m venv .venv && source .venv/bin/activate      # Python 3.13 or 3.14
+pip install -r requirements.txt
+cp .env.example .env                                    # then fill in the API keys
 ```
 
-#### `orphaned_metadata_cleanup.py` (movies + documentaries)
-- **What it does (report-only)**: Reports per-folder issues matching the movie pipeline contract:
-  - folders with video but missing `movie.nfo` and/or `poster.jpg`
-  - folders with `movie.nfo`/`poster.jpg` but no video in the same folder
-  - folders with intermediate leftovers (`metadata.json`, `tags.xml`) next to video
-- **Usage**:
+System tools: MKVToolNix (`mkvmerge`, `mkvpropedit`, `mkvextract`, `mkvinfo`), FFmpeg
+(`ffmpeg` with the `alac` encoder, `ffprobe`), `setfacl` (package `acl`), and for
+optional tools `mediainfo`, `ffsubsync`.
+
+## Running the pipelines
 
 ```bash
-./maintenance/orphaned_metadata_cleanup.py
-./maintenance/orphaned_metadata_cleanup.py --csv report.csv
-./maintenance/orphaned_metadata_cleanup.py --json report.json
+source .venv/bin/activate
+
+# Movies: movies/ -> tagged/ -> cleaned/, then verify the library
+python3 movie_cleanup/batch_cleaner.py
+python3 movie_cleanup/mkv_remux_cleanroom.py
+python3 movie_cleanup/verify_movies.py                      # scans $RC_VERIFY_SCAN_DIR
+
+# TV: tvshows/ -> tagged_tv/ -> cleaned_tv/
+python3 tv_cleanup/tv_batch_cleaner.py
+python3 tv_cleanup/tv_mkv_remux_cleanroom.py
+
+# Music: music/ -> cleaned_music/ -> $RC_MEDIA_BASE/music + Lidarr unmonitor
+python3 music_cleanup/music_cleaner.py                      # --no-publish / --publish-only / --no-lidarr / --library DIR
+
+# Foreign films: see foreign_cleanup/PIPELINE.md
+python3 foreign_cleanup/remux_foreign.py foreign_cleanup/spec_batch4.json --run
 ```
 
-#### `orphaned_tv_metadata_report.py` (TV shows)
-- **What it does (report-only)**: Reports per-folder issues for TV show libraries — missing NFOs, orphaned metadata, incomplete season folders.
-- **Usage**:
+The batch and remux scripts take no flags. All of them run 4 workers: the stages are
+storage-bound against one ZFS pool and more workers make them slower (see `CLAUDE.md`).
+Foreign-original films are rejected by the movie and TV batch stages and handled by
+`foreign_cleanup/` instead.
+
+## Maintenance scripts
+
+Read-only unless the flag in the last column is given. None of them touch the servarr
+working tree except to write logs and outputs.
+
+| Script | What it does | Destructive flag |
+|---|---|---|
+| `fix_media_perms.py [paths]` | strips ACLs, sets `$RC_MEDIA_OWNER:$RC_MEDIA_GROUP`, dirs 2775, files 664 on the four libraries (or given paths under `$RC_MEDIA_BASE`); re-execs under sudo | `--apply` |
+| `orphaned_metadata_cleanup.py [paths] [--json] [--csv]` | movie/doc folders missing `movie.nfo`/`poster.jpg`, metadata without video, leftover `metadata.json`/`tags.xml` | none |
+| `orphaned_tv_metadata_report.py [--root] [--json] [--csv]` | same three checks at the show-root level of the TV library (no season/episode checks) | none |
+| `audit_existing_libraries.py [--movies-dir] [--docs-dir] [--deep]` | filesystem + NFO checks per movie folder; `--deep` adds `mkvmerge -J` track checks. Does not talk to Radarr | `--move-bad` moves flagged folders to `--move-dest` |
+| `audit_library.py [scan_dir] [--out PREFIX] [--tolerance MIN]` | 10-check audit (names vs NFO vs tags, runtime vs ffprobe, MKV count, poster) → `PREFIX.md` + `.json`; default prefix `./audit_<date>` | none |
+| `audit_content_vs_metadata.py [scan_dir] [--csv] [--tolerance]` | NFO runtime vs ffprobe duration, MKV TITLE tag vs NFO title | none |
+| `audit_title_mismatches.py [scan_dir] [--csv]` | NFO title words vs folder name (<60% overlap flagged) | none |
+| `codec_bitrate_report.py [paths] [--prefer ffprobe\|mediainfo] [--json] [--csv] [--limit]` | one row per video file: size, duration, codecs, resolution, bitrate | none |
+| `audit_decode_integrity.py [scan_dir] [--workers 3] [--threads 4] [--limit] [--resume JSONL ...]` | full software decode of every MKV; logs decoder errors (HEVC slice, H.264 mmco, missing PPS/SPS, …) → `logs/movie_decode_audit_<ts>.{log,jsonl,md}`. Multi-day; `--resume` (repeatable) skips files already OK/ERRORS/TIMEOUT | none |
+| `compare_movie_copies.py [--path-a] [--path-b a,b] [--ssh-a] [--ssh-b] [--details] [--strict-imdb]` | matches NEW (`cleaned/`) against EXISTING (`movies,movies2`) by IMDb id, probes both, recommends KEEP NEW / KEEP EXISTING / TIE by resolution, HDR, bit depth, codec, bitrate, audio; always writes `logs/compare_plan_<ts>.json` | `--apply` replaces the losing copy (high-confidence, imdb-keyed, local only; sudo) |
+| `local_vs_remote_compare.py [--local] [--remote-host] [--remote-paths ...]` | local-only / remote-only / both title lists, classified Movie vs Documentary from NFO genre; no quality comparison | none |
+| `regenerate_nfos.py (--audit\|--run) [--scan-dir ...] [--workers 8] [--limit] [--json] [--csv]` | rebuilds `movie.nfo`, `poster.jpg`, `fanart.jpg` from TMDB using the MKV's embedded TMDB/IMDB tags; old NFO backed up to `nfo_backups/` | `--run` |
+| `radarr_upgrade_push.py [--compare-output FILE]` | reads saved `compare_movie_copies.py --details` output, adds net-new and high-confidence KEEP NEW titles to Radarr with profile "Mine" and an immediate search | `--run` |
+
+Notes that matter:
+- `fix_media_perms.py` does not read `.env`; `RC_MEDIA_*` must be exported in the shell
+  to take effect, and `sudo` strips them anyway. On the default box the defaults match.
+- `orphaned_*`, `codec_bitrate_report.py` and `audit_existing_libraries.py` hardcode
+  `/storage/media/...` defaults and ignore `RC_MEDIA_BASE`; pass paths explicitly on
+  another host.
+- `audit_library.py`, `audit_content_vs_metadata.py` and `compare_movie_copies.py` abort
+  on an unreadable folder or a failed SSH call during indexing rather than skipping it.
+- `audit_decode_integrity.py` writes a fresh timestamped set of files on every run; after
+  several interruptions, pass every prior JSONL to `--resume`.
+
+## Configuration
+
+All variables are documented in `.env.example`. Scripts call `load_dotenv()` and find
+the repo-root `.env` from any working directory.
+
+| Variable | Used by |
+|---|---|
+| `TMDB_API_KEY` | movie/TV batch cleaners, foreign scripts, `regenerate_nfos.py`, `scan_library_languages.py` |
+| `RC_MEDIA_BASE` | library root (default `/storage/media`); base for `RC_SERVARR_DIR` and the music destination |
+| `RC_SERVARR_DIR` | working tree (default `$RC_MEDIA_BASE/servarr`) |
+| `RC_MEDIA_OWNER` / `RC_MEDIA_GROUP` | `fix_media_perms.py` (shell-exported only), music publish |
+| `RC_VERIFY_SCAN_DIR` | default scan dir for `verify_movies.py`, `audit_*.py`, `audit_decode_integrity.py` |
+| `RC_FFMPEG_BIN` / `RC_FFPROBE_BIN` | non-PATH FFmpeg for music, decode audit, library audits |
+| `RADARR_URL` / `RADARR_API_KEY` / `RADARR_PROFILE_ID` / `RADARR_ROOT_FOLDER` | `radarr_upgrade_push.py` (API key required) |
+| `OPENSUB_API_KEY` | `foreign_cleanup/search_opensubs.py`, `fetch_opensubs.py` |
+| `LIDARR_URL` / `LIDARR_API_KEY` | `music_cleanup/music_cleaner.py` |
+
+## Tests
 
 ```bash
-./maintenance/orphaned_tv_metadata_report.py
-./maintenance/orphaned_tv_metadata_report.py --csv report.csv
-./maintenance/orphaned_tv_metadata_report.py --json report.json
+python -m pytest music_cleanup/tests movie_cleanup/tests -q     # needs ffmpeg on PATH
 ```
 
-#### `audit_existing_libraries.py`
-- **What it does**: Audits Radarr vs filesystem state — finds mismatches between what Radarr thinks exists and what's actually on disk.
-- **Usage**:
-
-```bash
-./maintenance/audit_existing_libraries.py --audit
-./maintenance/audit_existing_libraries.py --audit --json report.json
-```
-
-#### `compare_movie_copies.py`
-- **What it does**: Compares movie copies across libraries (e.g., movies vs documentaries) — finds duplicates, codec/quality differences.
-- **Usage**:
-
-```bash
-./maintenance/compare_movie_copies.py --audit
-./maintenance/compare_movie_copies.py --audit --csv report.csv
-```
-
-#### `regenerate_nfos.py`
-- **What it does**: Regenerates `movie.nfo`, `poster.jpg`, and `fanart.jpg` from TMDB for all movies and documentaries. Uses MKV embedded tags (TMDB/IMDB ID) as the authoritative source. Produces Jellyfin-compatible NFOs with `<uniqueid>` tags and proper collection linking (`<collectionnumber>` + `<uniqueid type="tmdbcol">`).
-- **Usage**:
-
-```bash
-./maintenance/regenerate_nfos.py --audit                  # Dry-run report
-./maintenance/regenerate_nfos.py --run                    # Regenerate everything
-./maintenance/regenerate_nfos.py --run --workers 20       # Parallel workers
-./maintenance/regenerate_nfos.py --audit --limit 10       # Quick test
-./maintenance/regenerate_nfos.py --audit --json out.json  # Export to JSON
-```
-
-#### `codec_bitrate_report.py`
-- **What it does (read-only)**: Generates a codec/resolution/bitrate report for media files (prefers `ffprobe`, falls back to `mediainfo`).
-- **Usage**:
-
-```bash
-./maintenance/codec_bitrate_report.py --limit 10
-./maintenance/codec_bitrate_report.py --csv media.csv
-./maintenance/codec_bitrate_report.py --json media.json
-```
-
-#### `audit_decode_integrity.py`
-- **What it does (read-only)**: Full ffmpeg software-decode of every MKV in the library, capturing decoder errors that `ffprobe` cannot surface — HEVC slice corruption ("First slice in a frame missing"), H.264 mmco/reference-frame errors, missing PPS/SPS, decode_slice_header errors, concealment warnings, etc. These are the bitstream defects that cause playback hangs/pauses but pass any header-only check.
-- **Why software decode**: NVDEC silently conceals slice/reference errors to keep playback smooth. CPU `libavcodec` is the sensitive path; the audit deliberately avoids hardware acceleration.
-- **Output**: incremental log + append-only JSONL + markdown summary in `$RC_SERVARR_DIR/logs/movie_decode_audit_<timestamp>.{log,jsonl,md}` (default `/storage/media/servarr/logs/`).
-- **Resume**: passing `--resume <prior.jsonl>` skips MKVs already recorded as OK/ERRORS/TIMEOUT (retries FAILED/INTERRUPTED). Essential for multi-day runs.
-- **Usage**:
-
-```bash
-# Full library, default 3 workers × 4 ffmpeg threads (= 12 cores, leaves Jellyfin headroom)
-./maintenance/audit_decode_integrity.py
-
-# Override scan dir + concurrency
-./maintenance/audit_decode_integrity.py /storage/media/documentaries --workers 2 --threads 4
-
-# Quick test on a handful of files
-./maintenance/audit_decode_integrity.py --limit 5
-
-# Continue a previous run after SIGINT / reboot
-./maintenance/audit_decode_integrity.py --resume /storage/media/servarr/logs/movie_decode_audit_20260522_161216.jsonl
-```
-
-## 🚀 Quick Start
-
-### Movie Processing
-```bash
-cd movie_cleanup
-./batch_cleaner.py
-./mkv_remux_cleanroom.py
-```
-
-### TV Processing
-```bash
-cd tv_cleanup
-./tv_batch_cleaner.py
-```
-
-### Music Processing
-```bash
-python3 /home/david/git/radarr_cleanup/music_cleanup/music_cleaner.py   # end to end; --no-publish to stop at cleaned_music/
-```
-
-## 🔧 Requirements
-
-
-- Python 3.13 or 3.14
-- FFmpeg (software decoders for `maintenance/audit_decode_integrity.py`)
-- `ffprobe` (typically via `ffmpeg`) or `mediainfo` (for `maintenance/codec_bitrate_report.py`)
-- `setfacl` (package `acl`) for `maintenance/fix_media_perms.py`
-- MKVToolNix (`mkvmerge`, `mkvpropedit`)
-- TMDB API key (for metadata — set `TMDB_API_KEY` in `.env`)
-- `requests` and `python-dotenv` (install via `pip install -r requirements.txt`)
-- `mutagen` and FFmpeg with the `alac` encoder (for `music_cleanup/`)
-- Lidarr API key (set `LIDARR_URL` / `LIDARR_API_KEY` in `.env`) for the Lidarr handoff in `music_cleanup/music_cleaner.py`
-
-## 🌐 Multi-server Configuration
-
-For Ubuntu 25/26 hosts with different mount layouts, use environment variables instead of editing scripts:
-
-- `RC_MEDIA_BASE`, `RC_MEDIA_OWNER`, `RC_MEDIA_GROUP` for `maintenance/fix_media_perms.py`
-- `RC_SERVARR_DIR` — the working tree every pipeline/maintenance script uses for stage dirs, logs, `nfo_backups/` and compare plans (default `$RC_MEDIA_BASE/servarr`). Scripts can be run from any directory.
-- `RC_VERIFY_SCAN_DIR` for the library `verify_movies.py` / `audit_decode_integrity.py` scan
-- `RC_FFMPEG_BIN`, `RC_FFPROBE_BIN` for non-PATH FFmpeg builds
-
-## 📝 Notes
-
-- Tools are independent and can be used separately
-- MKV processing preserves original files until verified
-- AV1 transcoding creates new files (original preserved)
-- All tools support graceful interruption and error handling
-
-
-
- 
+The music suite builds synthetic FLACs and a fake Lidarr; the movie suite covers log-dir
+resolution only. The pipeline scripts are otherwise exercised by running them.

@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What This Repo Does
 
-A media library management toolkit for cleaning and enriching MKV files destined for Jellyfin. It fetches TMDB metadata, selects optimal audio/subtitle tracks, remuxes MKVs, and verifies structure. There is a parallel pipeline for movies and TV shows.
+A media library management toolkit for cleaning and enriching MKV files destined for Jellyfin. It fetches TMDB metadata, selects optimal audio/subtitle tracks, remuxes MKVs, and verifies structure. There are parallel pipelines for movies and TV shows, a one-stage music pipeline (`music_cleanup/`), and a spec-driven manual pipeline for foreign-original films (`foreign_cleanup/PIPELINE.md`).
 
 Pipeline order:
 1. `batch_cleaner.py` / `tv_batch_cleaner.py` — TMDB metadata, NFO generation, MKV tag injection. English-original films are staged into `tagged/`. Foreign-original films (TMDB `original_language != 'en'`) are **not handled by this pipeline** — they are moved to `failed/` and managed by separate scripts / manual processes.
@@ -36,8 +36,8 @@ python3 music_cleanup/music_cleaner.py --no-publish # stop at cleaned_music/ (--
 ./maintenance/fix_media_perms.py              # dry-run
 ./maintenance/fix_media_perms.py --apply      # apply with auto-sudo
 ./maintenance/orphaned_metadata_cleanup.py --csv report.csv
-./maintenance/audit_existing_libraries.py /storage/media/movies
-./maintenance/compare_movie_copies.py --new /path/new --existing /path/old
+./maintenance/audit_existing_libraries.py --movies-dir /storage/media/movies --deep
+./maintenance/compare_movie_copies.py --path-a /storage/media/servarr/cleaned --path-b /storage/media/movies,/storage/media/movies2 --details
 ./maintenance/audit_library.py /storage/media/movies --out /tmp/audit   # full 10-check audit
 ./maintenance/audit_decode_integrity.py --workers 3 --threads 4         # ffmpeg full-decode pass; --resume <jsonl> to continue
 
@@ -54,8 +54,8 @@ Scripts load configuration from `.env` (not committed; see `.env.example`). All 
 | `TMDB_API_KEY` | Required — TMDB API key |
 | `RC_MEDIA_BASE` | Root path for media storage |
 | `RC_SERVARR_DIR` | Servarr working tree for stage dirs, logs, `nfo_backups/`, compare plans (default `$RC_MEDIA_BASE/servarr`) |
-| `RC_MEDIA_OWNER` / `RC_MEDIA_GROUP` | Ownership for `fix_media_perms.py` |
-| `RC_VERIFY_SCAN_DIR` | Library scanned by `verify_movies.py` / `audit_decode_integrity.py` |
+| `RC_MEDIA_OWNER` / `RC_MEDIA_GROUP` | Ownership for `fix_media_perms.py` (which does **not** call `load_dotenv`, so these only work exported in the shell) and music publish |
+| `RC_VERIFY_SCAN_DIR` | Library scanned by `verify_movies.py`, `audit_decode_integrity.py`, `audit_library.py`, `audit_content_vs_metadata.py`, `audit_title_mismatches.py` |
 | `RC_FFMPEG_BIN`, `RC_FFPROBE_BIN` | Custom FFmpeg locations |
 | `RADARR_URL`, `RADARR_API_KEY`, `RADARR_PROFILE_ID`, `RADARR_ROOT_FOLDER` | `maintenance/radarr_upgrade_push.py` |
 | `OPENSUB_API_KEY` | `foreign_cleanup/` subtitle search |
@@ -71,7 +71,7 @@ Python packages: `requests`, `python-dotenv`, `mutagen` (see `requirements.txt`)
 
 ## Architecture
 
-**Concurrency**: All major scripts use `ThreadPoolExecutor`, `MAX_WORKERS = 4` in `batch_cleaner.py`, `mkv_remux_cleanroom.py`, and `tv_mkv_remux_cleanroom.py`. Despite the TMDB-lookup stage being network-bound, `batch_cleaner.py` also does local file I/O per movie (`fast_copy` into `./tagged`, `mkvmerge -J` metadata reads) against the same ZFS pool used by the remux stage, Jellyfin, Frigate, and Ollama — so it's storage-bound too, not just network-bound (originally ran at 8 workers; dropped to 4 in 2026-07 after concurrent `fast_copy`s of several 40+ GB Remux files saturated the pool and stalled an unrelated `mkvmerge -J` metadata read past its timeout). The remux stage is **storage-bound, not CPU-bound** — each `mkvmerge` is a demux/remux of a 40–90 GB file, so the bottleneck is ZFS pool bandwidth, not cores. Running too many in parallel splits that one pool N ways, collapses per-job throughput, and trips the per-job timeout (this happened at 12-way: 9 of 16 jobs timed out and landed in `./failed/`). Keep all three at 4 so each job gets enough bandwidth to finish well under timeout and leaves I/O headroom for co-resident Jellyfin/Frigate/Ollama. More threads do **not** make any of these faster here. Scripts register `SIGINT`/`SIGTERM` handlers for graceful shutdown.
+**Concurrency**: All major scripts use `ThreadPoolExecutor`, `MAX_WORKERS = 4` in `batch_cleaner.py`, `mkv_remux_cleanroom.py`, and `tv_mkv_remux_cleanroom.py`. Despite the TMDB-lookup stage being network-bound, `batch_cleaner.py` also does local file I/O per movie (`fast_copy` into `tagged/`, `mkvmerge -J` metadata reads) against the same ZFS pool used by the remux stage, Jellyfin, Frigate, and Ollama — so it's storage-bound too, not just network-bound (originally ran at 8 workers; dropped to 4 in 2026-07 after concurrent `fast_copy`s of several 40+ GB Remux files saturated the pool and stalled an unrelated `mkvmerge -J` metadata read past its timeout). The remux stage is **storage-bound, not CPU-bound** — each `mkvmerge` is a demux/remux of a 40–90 GB file, so the bottleneck is ZFS pool bandwidth, not cores. Running too many in parallel splits that one pool N ways, collapses per-job throughput, and trips the per-job timeout (this happened at 12-way: 9 of 16 jobs timed out and landed in `failed/`). Keep all three at 4 so each job gets enough bandwidth to finish well under timeout and leaves I/O headroom for co-resident Jellyfin/Frigate/Ollama. More threads do **not** make any of these faster here. Scripts register `SIGINT`/`SIGTERM` handlers for graceful shutdown.
 
 **File routing**: Failed files go to `failed/`, `failed_tv/`, or `failed_music/`. Files needing manual review (multiple video tracks, no acceptable audio, unparseable album folders) go to `review/`, `review_tv/`, or `review_music/`. Foreign-original sources are **not processed by this pipeline** — the movie batch step routes them to `failed/` and they are handled by separate scripts / manual work.
 
@@ -104,12 +104,13 @@ Python packages: `requests`, `python-dotenv`, `mutagen` (see `requirements.txt`)
 
 ## Maintenance Script Conventions
 
-All scripts in `maintenance/` follow these patterns:
-- Dry-run by default (`--audit`); destructive ops require `--run` or `--apply`
-- `--json` / `--csv` export, `--limit N` for quick testing
-- `ThreadPoolExecutor` with graceful `SIGINT`/`SIGTERM` shutdown
-- Errors accumulate and report at the end — never stop mid-run on a single failure
-- Symlinks skipped in all directory walks
+Target conventions for `maintenance/` (the older scripts only partly meet them; the root README's table says which flags each one actually has):
+- Read-only by default. The destructive flag is `--apply` (`fix_media_perms.py`, `compare_movie_copies.py`), `--run` (`regenerate_nfos.py`, `radarr_upgrade_push.py`) or `--move-bad` (`audit_existing_libraries.py`). `regenerate_nfos.py` requires one of `--audit`/`--run` explicitly.
+- `--json` / `--csv` export and `--limit N` where they make sense (not all scripts have them; `audit_library.py` uses `--out PREFIX` instead).
+- `ThreadPoolExecutor` for I/O-bound scans; only `audit_decode_integrity.py` and `regenerate_nfos.py` install `SIGINT`/`SIGTERM` handlers.
+- Errors accumulate and report at the end. Known exceptions that abort on a single failure: `audit_library.py` / `audit_content_vs_metadata.py` (unreadable folder), `compare_movie_copies.py` / `local_vs_remote_compare.py` (index-phase SSH error), `radarr_upgrade_push.py` (initial movie list fetch).
+- Symlinks are skipped by the `os.walk`-based scripts; the `iterdir`/`isdir`-based audits (`audit_library.py`, `audit_content_vs_metadata.py`, `audit_title_mismatches.py`, `audit_existing_libraries.py`) follow them.
+- `fix_media_perms.py`, `orphaned_*`, `codec_bitrate_report.py` and `audit_existing_libraries.py` do not load `.env` and hardcode `/storage/media` defaults.
 
 `audit_decode_integrity.py` is a long-running CPU-bound audit (full ffmpeg decode of every MKV, multi-day for a large library). It departs from a few defaults by design: no dry-run flag (it's read-only), `--resume <jsonl>` to skip files already recorded as OK/ERRORS/TIMEOUT in a prior run, JSONL appended as each decode completes so partial findings survive interruption, and conservative parallelism tuned to leave Jellyfin headroom (default `--workers 3 --threads 4` = 12 of 20 logical cores on this box). Software decode is intentional — NVDEC silently conceals the HEVC slice / H.264 mmco errors this script exists to find.
 
@@ -126,14 +127,14 @@ All scripts in `maintenance/` follow these patterns:
 ## Radarr Integration
 
 - **URL**: `http://192.168.36.195:7878` (`.env` `RADARR_URL`)
-- **API key**: in `.env` as `RADARR_API_KEY`. `radarr_upgrade_push.py` reads `RADARR_URL`/`RADARR_API_KEY`/`RADARR_PROFILE_ID`/`RADARR_ROOT_FOLDER` from `.env` (live values are baked in as fallback defaults).
+- **API key**: in `.env` as `RADARR_API_KEY` (no fallback; the script exits if it is unset). `RADARR_URL`, `RADARR_PROFILE_ID` and `RADARR_ROOT_FOLDER` default to the live values.
 - **Quality profile "Mine" (id=7)**: upgrades enabled, cutoff = Remux-2160p, allows Bluray-1080p / Remux-1080p / WEBDL-2160p / WEBRip-2160p / Bluray-2160p / Remux-2160p. Custom format scores: AV1=+100, h265=+75, h264=+50, Unwanted=-100.
 - **Root folder**: `/servarr/servarr/movies`
 - **Indexers**: NZBgeek + Nzb.su (Usenet, both RSS-enabled)
 
 ### Workflow: Add net-new or upgrade movies to Radarr
 
-Use `maintenance/radarr_upgrade_push.py`. It reads the output of `compare_movie_copies.py`, extracts IMDb IDs for net-new and KEEP-NEW movies, and adds them to Radarr with profile "Mine" + immediate search.
+Use `maintenance/radarr_upgrade_push.py`. It reads saved `compare_movie_copies.py --details` output, extracts IMDb IDs for net-new titles (section 1) and `KEEP NEW` recommendations with `confidence=high` (section 3), skips anything already in Radarr, and adds the rest with profile "Mine" and `addOptions.searchForMovie` so the search starts immediately. Without `--details` there is no section 3 and only net-new titles are pushed.
 
 ```bash
 # 1. Run the library comparison (both sides are remote SSH hosts)
@@ -183,7 +184,7 @@ GET /api/v3/movie
 ```
 Returns array of all movies. Filter by `imdbId` field to avoid duplicates.
 
-**Trigger search for specific movies** (bulk):
+**Trigger search for specific movies** (bulk; not used by the script, kept for manual use):
 ```
 POST /api/v3/command
 { "name": "MoviesSearch", "movieIds": [1, 2, 3] }
@@ -194,8 +195,10 @@ POST /api/v3/command
 ## Subdirectory Layout
 
 ```
-movie_cleanup/      Main movie pipeline + helpers/
+movie_cleanup/      Main movie pipeline + helpers/ + tests/
 tv_cleanup/         Main TV pipeline
-music_cleanup/      Music pipeline: Lidarr staging -> ALAC -> library (see its README)
-maintenance/        Read-only reporting and permission tools
+music_cleanup/      Music pipeline: Lidarr staging -> ALAC -> library + tests/ (see its README)
+foreign_cleanup/    Spec-driven pipeline for non-English-original films (PIPELINE.md, spec_*.json, subs/)
+maintenance/        Library audits and comparisons (read-only by default), permissions, NFO regeneration, Radarr push
+docs/superpowers/   Design specs and implementation plans
 ```
