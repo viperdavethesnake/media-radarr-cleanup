@@ -395,22 +395,29 @@ def main():
         f"timeout {REMUX_TIMEOUT}s each {'[RUN]' if args.run else '[DRY-RUN]'}")
 
     results, not_started = [], []
+    cancelled = set()
+    swept = False
     with ThreadPoolExecutor(max_workers=args.workers) as pool:
         futures = {pool.submit(process, s, args.run): s['folder'] for s in specs}
         for fut in as_completed(futures):
-            if shutdown_requested:
+            if shutdown_requested and not swept:
+                # Cancel whatever is still pending, exactly once. Futures already
+                # running keep going (the signal handler is killing their mkvmerge
+                # directly) and report their own 'interrupted' result when they finish.
+                swept = True
                 for f, name in futures.items():
-                    if f.cancel():
+                    if name not in cancelled and f.cancel():
+                        cancelled.add(name)
                         not_started.append(name)
+            if fut.cancelled():
+                # Already accounted for in not_started above — collecting its result
+                # would raise CancelledError and double-count the film as failed too.
+                continue
             try:
                 results.append(fut.result())
             except Exception as e:
                 results.append({'folder': futures[fut], 'ok': False,
                                 'error': f'{type(e).__name__}: {e}'})
-            if shutdown_requested:
-                # Remaining futures are either cancelled or already running (and being
-                # killed by the handler); collect those as they finish.
-                continue
     return _summarise(results, not_started)
 
 

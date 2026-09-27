@@ -1,6 +1,7 @@
 """Ctrl-C on remux_foreign kills in-flight mkvmerge, removes partial output, cancels the rest."""
 import importlib
 import os
+import re
 import subprocess
 import threading
 import time
@@ -224,6 +225,21 @@ def test_pending_films_cancelled_after_interrupt(rf, monkeypatch, tmp_path):
     assert started[0] == 'F0' and len(started) <= 2
     log = (tmp_path / 'logs' / 'remux_foreign.log').read_text()
     assert 'F5: not started' in log and 'F4: not started' in log
+
+    assert 'CancelledError' not in log
+
+    # Every film must land in exactly one summary group — no duplicates, no double-counting.
+    summary_lines = [l for l in log.splitlines() if any(e in l for e in ('✅', '❌', '⚠️', '⏸'))]
+    for name in ('F0', 'F1', 'F2', 'F3', 'F4', 'F5'):
+        occurrences = sum(1 for l in summary_lines if f'{name}:' in l)
+        assert occurrences == 1, f'{name} appears in {occurrences} summary groups'
+
+    tally_line = next(l for l in log.splitlines() if '/6 succeeded' in l)
+    ok_n = int(re.search(r'(\d+)/6 succeeded', tally_line).group(1))
+    failed_n = int(m.group(1)) if (m := re.search(r'(\d+) failed', tally_line)) else 0
+    interrupted_n = int(m.group(1)) if (m := re.search(r'(\d+) interrupted', tally_line)) else 0
+    not_started_n = int(m.group(1)) if (m := re.search(r'(\d+) not started', tally_line)) else 0
+    assert ok_n + failed_n + interrupted_n + not_started_n == 6
 
 
 def test_worker_exception_is_reported_not_fatal(rf, monkeypatch, tmp_path):
