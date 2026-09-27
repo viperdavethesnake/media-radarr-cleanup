@@ -11,7 +11,6 @@ SERVARR_DIR = os.getenv('RC_SERVARR_DIR') or os.path.join(os.getenv('RC_MEDIA_BA
 TAGGED_DIR = os.path.join(SERVARR_DIR, 'tagged_tv')
 CLEANED_DIR = os.path.join(SERVARR_DIR, 'cleaned_tv')
 REVIEW_DIR = os.path.join(SERVARR_DIR, 'review_tv')
-FAILED_DIR = os.path.join(SERVARR_DIR, 'failed_tv')
 LOG_DIR = os.path.join(SERVARR_DIR, 'logs')
 MAX_WORKERS = 4
 
@@ -215,17 +214,6 @@ def _cleanup_partial(dst_mkv):
             log(f"    [CLEANUP] Removed partial output: {os.path.basename(dst_mkv)}")
         except OSError as e:
             log(f"    ⚠ Could not remove partial output {dst_mkv}: {e}")
-
-
-def _move_to_failed(folder, base):
-    failed = os.path.join(FAILED_DIR, base)
-    try:
-        if os.path.exists(failed):
-            shutil.rmtree(failed, ignore_errors=True)
-        shutil.move(folder, failed)
-        log(f"  [FAILED] Moved to failed directory: {failed}")
-    except Exception as e:
-        log(f"❌ Could not move to failed: {e}")
 
 
 def _episode_sidecars(mkv_path):
@@ -450,7 +438,7 @@ def finalize_show(tagged_folder, ok_count, total):
 def main():
     global shutdown_requested
 
-    for d in (LOG_DIR, CLEANED_DIR, REVIEW_DIR, FAILED_DIR):
+    for d in (LOG_DIR, CLEANED_DIR, REVIEW_DIR):
         os.makedirs(d, exist_ok=True)
 
     folders = [os.path.join(TAGGED_DIR, d) for d in os.listdir(TAGGED_DIR)
@@ -467,6 +455,7 @@ def main():
         f"{len(all_jobs)} episodes, max {MAX_WORKERS} concurrent")
 
     show_ok_counts = defaultdict(int)
+    failed_eps = []
     aborted = False
     if all_jobs:
         try:
@@ -484,9 +473,11 @@ def main():
                             aborted = True
                             break
                         try:
-                            status, job, _err = fut.result(timeout=3600)
+                            status, job, err = fut.result(timeout=3600)
                             if status == 'ok':
                                 show_ok_counts[job['tagged_folder']] += 1
+                            elif status == 'failed':
+                                failed_eps.append((job['src_mkv'], err))
                             log(f"📊 Progress: {completed}/{len(futures)} episodes")
                         except Exception as e:
                             log(f"❌ Worker thread error: {e}")
@@ -506,6 +497,11 @@ def main():
     if not aborted:
         for tf in folders:
             finalize_show(tf, show_ok_counts.get(tf, 0), show_totals.get(tf, 0))
+
+    if failed_eps:
+        log(f"⚠️ {len(failed_eps)} episode(s) failed and remain in tagged_tv/ — rerun to retry:")
+        for src, err in failed_eps:
+            log(f"   {os.path.basename(src)}: {err}")
 
     log("✅ All TV remux operations completed.")
 

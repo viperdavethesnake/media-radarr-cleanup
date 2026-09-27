@@ -85,8 +85,9 @@ Reads `tagged_tv/`, writes `cleaned_tv/`. 4 workers, one episode per job, 3600 s
 - Global tags survive the remux, so embedded identity is preserved.
 - `>1 video track` or no acceptable audio → that episode (with its `.nfo` and
   `-thumb.jpg`) moves to `review_tv/<show>/<Season NN>/`. mkvmerge errors and timeouts
-  leave the episode in `tagged_tv/` with the partial output removed; stage 2 never
-  writes to `failed_tv/`.
+  leave the episode in `tagged_tv/` with the partial output removed, so a rerun retries
+  it; every failed episode is listed with its reason at the end of the run. Stage 2
+  never writes to `failed_tv/`.
 - Per-episode `.nfo` and `-thumb.jpg` are renamed onto the new output stem so Jellyfin
   keeps matching them; show-level sidecars (`tvshow.nfo`, `metadata.json`, `poster.jpg`,
   `fanart.jpg`, `logo.png`, `seasonNN-poster.jpg`) are copied at finalize.
