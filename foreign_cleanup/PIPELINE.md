@@ -86,6 +86,11 @@ Notes:
   files exist) and skips a film on any drift. Timeout 3600 s per remux; a timeout means
   pool trouble — investigate, don't retry bigger. mkvmerge exit 1 (warnings) keeps the
   output.
+- Ctrl-C (or SIGTERM) on `remux_foreign.py --run` terminates every running mkvmerge,
+  removes their partial output, cancels queued films, and exits 130 with a summary of
+  succeeded / failed / interrupted / not started. Rerun the same spec to pick up the
+  rest. A second Ctrl-C hard-exits. A failed or timed-out mkvmerge also has its partial
+  output removed.
 - `--metadata-only` regenerates NFO/artwork/tags for films already in `cleaned/` and
   reports (does not fix) a filename that differs from the computed one. It writes
   immediately, with or without `--run`.

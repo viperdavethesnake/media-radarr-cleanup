@@ -192,3 +192,77 @@ def test_dry_run_exception_keeps_preexisting_output(rf, film, monkeypatch):
     rf.process(_spec(src), False)
     assert existing.exists()
     assert existing.read_bytes() == b'old'
+
+
+# ── Task 3: main loop ────────────────────────────────────────────────────────
+
+def _specs(n):
+    return [{'folder': f'F{i}', 'src_folder': '/nowhere', 'video': 0, 'audio_default': 1} for i in range(n)]
+
+
+def test_pending_films_cancelled_after_interrupt(rf, monkeypatch, tmp_path):
+    started = []
+    gate = threading.Event()
+
+    def fake_process(spec, apply_changes):
+        started.append(spec['folder'])
+        if spec['folder'] == 'F0':
+            rf.shutdown_requested = True
+            return {'folder': 'F0', 'ok': False, 'error': 'interrupted', 'interrupted': True}
+        gate.wait(2)
+        return {'folder': spec['folder'], 'ok': True, 'size_gb': 1, 'seconds': 1}
+
+    monkeypatch.setattr(rf, 'process', fake_process)
+    specfile = tmp_path / 'spec.json'
+    specfile.write_text(__import__('json').dumps(_specs(6)))
+    monkeypatch.setattr('sys.argv', ['remux_foreign.py', str(specfile), '--run', '--workers', '1'])
+    rc = rf.main()
+    gate.set()
+    assert rc == 130
+    # The single worker may already have dequeued F1 before the cancel lands; anything
+    # beyond that must have been cancelled.
+    assert started[0] == 'F0' and len(started) <= 2
+    log = (tmp_path / 'logs' / 'remux_foreign.log').read_text()
+    assert 'F5: not started' in log and 'F4: not started' in log
+
+
+def test_worker_exception_is_reported_not_fatal(rf, monkeypatch, tmp_path):
+    def fake_process(spec, apply_changes):
+        if spec['folder'] == 'F1':
+            raise RuntimeError('boom')
+        return {'folder': spec['folder'], 'ok': True, 'size_gb': 1, 'seconds': 1}
+
+    monkeypatch.setattr(rf, 'process', fake_process)
+    specfile = tmp_path / 'spec.json'
+    specfile.write_text(__import__('json').dumps(_specs(3)))
+    monkeypatch.setattr('sys.argv', ['remux_foreign.py', str(specfile), '--run'])
+    rc = rf.main()
+    assert rc == 1
+    log = (tmp_path / 'logs' / 'remux_foreign.log').read_text()
+    assert 'F1: RuntimeError: boom' in log
+    assert '2/3 succeeded' in log
+
+
+def test_metadata_only_stops_between_films(rf, monkeypatch, tmp_path):
+    seen = []
+
+    def fake_refresh(spec):
+        seen.append(spec['folder'])
+        rf.shutdown_requested = True
+        return {'folder': spec['folder'], 'ok': True, 'name_match': True}
+
+    monkeypatch.setattr(rf, 'metadata_refresh', fake_refresh)
+    specfile = tmp_path / 'spec.json'
+    specfile.write_text(__import__('json').dumps(_specs(3)))
+    monkeypatch.setattr('sys.argv', ['remux_foreign.py', str(specfile), '--metadata-only'])
+    rc = rf.main()
+    assert seen == ['F0']
+    assert rc == 130
+
+
+def test_clean_run_exit_zero(rf, monkeypatch, tmp_path):
+    monkeypatch.setattr(rf, 'process', lambda spec, a: {'folder': spec['folder'], 'ok': True, 'dry_run': True})
+    specfile = tmp_path / 'spec.json'
+    specfile.write_text(__import__('json').dumps(_specs(2)))
+    monkeypatch.setattr('sys.argv', ['remux_foreign.py', str(specfile)])
+    assert rf.main() == 0

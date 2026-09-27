@@ -338,6 +338,35 @@ def metadata_refresh(spec):
         return {'folder': label, 'ok': False, 'error': str(e)}
 
 
+def _summarise(results, not_started):
+    """Log the four groups and return the exit code."""
+    print()
+    ok = [r for r in results if r['ok']]
+    interrupted = [r for r in results if r.get('interrupted')]
+    failed = [r for r in results if not r['ok'] and not r.get('interrupted')]
+    for r in sorted(ok, key=lambda x: x['folder']):
+        if 'name_match' in r:
+            extra = 'name OK' if r['name_match'] else f"NAME MISMATCH: have {r['filename']!r}, computed {r['computed']!r}"
+        elif r.get('dry_run'):
+            extra = '(dry-run)'
+        else:
+            extra = f"{r.get('size_gb')} GB in {r.get('seconds')}s"
+        log(f"✅ {r['folder']}: {extra}")
+    for r in sorted(failed, key=lambda x: x['folder']):
+        log(f"❌ {r['folder']}: {r['error']}")
+    for r in sorted(interrupted, key=lambda x: x['folder']):
+        log(f"⚠️ {r['folder']}: interrupted (partial output removed)")
+    for name in sorted(not_started):
+        log(f"⏸ {name}: not started")
+    log(f"{len(ok)}/{len(results) + len(not_started)} succeeded"
+        + (f", {len(failed)} failed" if failed else "")
+        + (f", {len(interrupted)} interrupted" if interrupted else "")
+        + (f", {len(not_started)} not started" if not_started else ""))
+    if interrupted or not_started:
+        return 130
+    return 1 if failed else 0
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('spec', nargs='+', help='JSON spec file(s) describing the films')
@@ -354,38 +383,35 @@ def main():
 
     if args.metadata_only:
         log(f"▶ metadata refresh: {len(specs)} film(s) in {CLEANED_DIR}")
-        results = [metadata_refresh(s) for s in specs]
-        print()
-        for r in results:
-            if r['ok']:
-                name = 'name OK' if r['name_match'] else f"NAME MISMATCH: have {r['filename']!r}, computed {r['computed']!r}"
-                log(f"✅ {r['folder']}: {name}")
-            else:
-                log(f"❌ {r['folder']}: {r['error']}")
-        failed = [r for r in results if not r['ok']]
-        log(f"{len(results) - len(failed)}/{len(results)} succeeded")
-        return 1 if failed else 0
+        results, not_started = [], []
+        for s in specs:
+            if shutdown_requested:
+                not_started.append(s['folder'])
+                continue
+            results.append(metadata_refresh(s))
+        return _summarise(results, not_started)
 
     log(f"▶ {len(specs)} film(s), {args.workers} concurrent, "
         f"timeout {REMUX_TIMEOUT}s each {'[RUN]' if args.run else '[DRY-RUN]'}")
 
-    results = []
+    results, not_started = [], []
     with ThreadPoolExecutor(max_workers=args.workers) as pool:
-        futures = [pool.submit(process, s, args.run) for s in specs]
+        futures = {pool.submit(process, s, args.run): s['folder'] for s in specs}
         for fut in as_completed(futures):
-            results.append(fut.result())
-
-    print()
-    for r in sorted(results, key=lambda x: x['folder']):
-        if r['ok']:
-            extra = '(dry-run)' if r.get('dry_run') else f"{r.get('size_gb')} GB in {r.get('seconds')}s"
-            log(f"✅ {r['folder']}: {extra}")
-        else:
-            log(f"❌ {r['folder']}: {r['error']}")
-
-    failed = [r for r in results if not r['ok']]
-    log(f"{len(results) - len(failed)}/{len(results)} succeeded")
-    return 1 if failed else 0
+            if shutdown_requested:
+                for f, name in futures.items():
+                    if f.cancel():
+                        not_started.append(name)
+            try:
+                results.append(fut.result())
+            except Exception as e:
+                results.append({'folder': futures[fut], 'ok': False,
+                                'error': f'{type(e).__name__}: {e}'})
+            if shutdown_requested:
+                # Remaining futures are either cancelled or already running (and being
+                # killed by the handler); collect those as they finish.
+                continue
+    return _summarise(results, not_started)
 
 
 if __name__ == '__main__':
