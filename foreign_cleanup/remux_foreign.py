@@ -187,8 +187,13 @@ def build_cmd(spec, src, dst):
 
 def run_mkvmerge(cmd, label):
     # 0 = ok, 1 = warnings (output still written), >=2 = fatal.
-    p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    # Check-and-register under the same lock the signal handler snapshots under: a
+    # process is either already in the snapshot the handler kills, or created after
+    # the flag was set (and refused here) — no gap where a new mkvmerge slips through.
     with _live_lock:
+        if shutdown_requested:
+            raise InterruptedError('shutdown requested before mkvmerge started')
+        p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         _live_procs.add(p)
     try:
         try:
@@ -238,6 +243,8 @@ def process(spec, apply_changes):
     partial_dst = partial_folder = None
     src_folder = spec['src_folder']
     try:
+        if shutdown_requested:
+            return {'folder': label, 'ok': False, 'error': 'not started', 'not_started': True}
         mkvs = [f for f in os.listdir(src_folder) if f.lower().endswith('.mkv')]
         if len(mkvs) != 1:
             return {'folder': label, 'ok': False, 'error': f'{len(mkvs)} MKVs in source folder'}
@@ -343,7 +350,14 @@ def _summarise(results, not_started):
     print()
     ok = [r for r in results if r['ok']]
     interrupted = [r for r in results if r.get('interrupted')]
-    failed = [r for r in results if not r['ok'] and not r.get('interrupted')]
+    # A future can be cancelled before process() ever runs (name lands in `not_started`
+    # via main()'s sweep) or process() can bail out at entry because the flag was
+    # already set (its result dict carries 'not_started' instead). Both mean the same
+    # thing to the summary, so fold the dict form's folder name into the same group.
+    not_started_results = [r for r in results if r.get('not_started')]
+    failed = [r for r in results
+              if not r['ok'] and not r.get('interrupted') and not r.get('not_started')]
+    all_not_started = sorted(not_started) + sorted(r['folder'] for r in not_started_results)
     for r in sorted(ok, key=lambda x: x['folder']):
         if 'name_match' in r:
             extra = 'name OK' if r['name_match'] else f"NAME MISMATCH: have {r['filename']!r}, computed {r['computed']!r}"
@@ -356,13 +370,16 @@ def _summarise(results, not_started):
         log(f"❌ {r['folder']}: {r['error']}")
     for r in sorted(interrupted, key=lambda x: x['folder']):
         log(f"⚠️ {r['folder']}: interrupted (partial output removed)")
-    for name in sorted(not_started):
+    for name in sorted(all_not_started):
         log(f"⏸ {name}: not started")
     log(f"{len(ok)}/{len(results) + len(not_started)} succeeded"
         + (f", {len(failed)} failed" if failed else "")
         + (f", {len(interrupted)} interrupted" if interrupted else "")
-        + (f", {len(not_started)} not started" if not_started else ""))
-    if interrupted or not_started:
+        + (f", {len(all_not_started)} not started" if all_not_started else ""))
+    # A Ctrl-C that lands with no mkvmerge live yet (pre-remux stage, or --metadata-only
+    # between films) can otherwise produce zero interrupted/not-started entries — the
+    # flag alone must still force 130, or a genuinely-interrupted run could exit 0/1.
+    if interrupted or not_started or not_started_results or shutdown_requested:
         return 130
     return 1 if failed else 0
 

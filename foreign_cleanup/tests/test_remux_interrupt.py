@@ -147,9 +147,18 @@ def test_interrupt_mid_remux_reports_interrupted_and_cleans(rf, film, monkeypatc
 
 
 def test_flag_set_after_success_is_still_ok(rf, film, monkeypatch):
+    # Flag flips right after mkvmerge finishes (e.g. during regen_metadata) — process()
+    # already checked the flag on entry and run_mkvmerge already started, so neither
+    # guard fires retroactively; a completed remux must still report ok.
     src, dst_folder = film
     monkeypatch.setattr(rf, 'build_cmd', _cmd_writing_partial_then(dst_folder, 0))
-    rf.shutdown_requested = True          # e.g. Ctrl-C during regen_metadata
+    real_run_mkvmerge = rf.run_mkvmerge
+
+    def run_then_interrupt(cmd, label):
+        real_run_mkvmerge(cmd, label)
+        rf.shutdown_requested = True
+
+    monkeypatch.setattr(rf, 'run_mkvmerge', run_then_interrupt)
     r = rf.process(_spec(src), True)
     assert r['ok'] is True
     assert (dst_folder / 'Film_(2001)_[1080p_hevc_truehd].mkv').exists()
@@ -195,6 +204,32 @@ def test_dry_run_exception_keeps_preexisting_output(rf, film, monkeypatch):
     assert existing.read_bytes() == b'old'
 
 
+# ── Fix round 1: never start a film after Ctrl-C ─────────────────────────────
+
+def test_process_returns_not_started_when_flag_set_on_entry(rf, film, monkeypatch):
+    src, dst_folder = film
+
+    def must_not_be_called(path):
+        raise AssertionError('mkv_identify should not be called when shutdown already requested')
+    monkeypatch.setattr(rf, 'mkv_identify', must_not_be_called)
+    rf.shutdown_requested = True
+    r = rf.process(_spec(src), True)
+    assert r == {'folder': 'Film_(2001)', 'ok': False, 'error': 'not started', 'not_started': True}
+
+
+def test_run_mkvmerge_refuses_to_start_when_flag_set(rf, monkeypatch):
+    # Belt-and-braces: if the fix under test is missing, run_mkvmerge would actually
+    # start the sleep and block on communicate() for the real duration — cap the
+    # timeout short so a regression fails fast instead of hanging the suite.
+    monkeypatch.setattr(rf, 'REMUX_TIMEOUT', 2)
+    rf.shutdown_requested = True
+    with pytest.raises(InterruptedError):
+        rf.run_mkvmerge(['sleep', '3109'], 'film')
+    assert not rf._live_procs
+    out = subprocess.run(['pgrep', '-f', '^sleep 3109$'], capture_output=True, text=True)
+    assert out.stdout.strip() == '', 'sleep 3109 was started despite the flag being set'
+
+
 # ── Task 3: main loop ────────────────────────────────────────────────────────
 
 def _specs(n):
@@ -220,9 +255,7 @@ def test_pending_films_cancelled_after_interrupt(rf, monkeypatch, tmp_path):
     rc = rf.main()
     gate.set()
     assert rc == 130
-    # The single worker may already have dequeued F1 before the cancel lands; anything
-    # beyond that must have been cancelled.
-    assert started[0] == 'F0' and len(started) <= 2
+    assert started == ['F0']
     log = (tmp_path / 'logs' / 'remux_foreign.log').read_text()
     assert 'F5: not started' in log and 'F4: not started' in log
 
@@ -240,6 +273,7 @@ def test_pending_films_cancelled_after_interrupt(rf, monkeypatch, tmp_path):
     interrupted_n = int(m.group(1)) if (m := re.search(r'(\d+) interrupted', tally_line)) else 0
     not_started_n = int(m.group(1)) if (m := re.search(r'(\d+) not started', tally_line)) else 0
     assert ok_n + failed_n + interrupted_n + not_started_n == 6
+    assert not_started_n == 5
 
 
 def test_worker_exception_is_reported_not_fatal(rf, monkeypatch, tmp_path):
@@ -282,3 +316,35 @@ def test_clean_run_exit_zero(rf, monkeypatch, tmp_path):
     specfile.write_text(__import__('json').dumps(_specs(2)))
     monkeypatch.setattr('sys.argv', ['remux_foreign.py', str(specfile)])
     assert rf.main() == 0
+
+
+def test_exit_130_whenever_flag_set(rf, monkeypatch, tmp_path):
+    # Case 1: flag already set before main() even starts — every film ends up
+    # not-started, whether via the pre-sweep cancel or via process()'s own entry
+    # check (mirrored here since 'process' is replaced for this test).
+    def fake_process_pre_set(spec, apply_changes):
+        if rf.shutdown_requested:
+            return {'folder': spec['folder'], 'ok': False, 'error': 'not started', 'not_started': True}
+        return {'folder': spec['folder'], 'ok': True, 'dry_run': True}
+
+    monkeypatch.setattr(rf, 'process', fake_process_pre_set)
+    specfile1 = tmp_path / 'spec1.json'
+    specfile1.write_text(__import__('json').dumps(_specs(3)))
+    monkeypatch.setattr('sys.argv', ['remux_foreign.py', str(specfile1), '--run'])
+    rf.shutdown_requested = True
+    assert rf.main() == 130
+
+    # Case 2: every film actually completes 'ok' — the flag only gets set as a side
+    # effect while the last one is running. Exit must still be 130, not 0.
+    rf.shutdown_requested = False
+
+    def fake_process_late_set(spec, apply_changes):
+        if spec['folder'] == 'F2':
+            rf.shutdown_requested = True
+        return {'folder': spec['folder'], 'ok': True, 'dry_run': True}
+
+    monkeypatch.setattr(rf, 'process', fake_process_late_set)
+    specfile2 = tmp_path / 'spec2.json'
+    specfile2.write_text(__import__('json').dumps(_specs(3)))
+    monkeypatch.setattr('sys.argv', ['remux_foreign.py', str(specfile2), '--run', '--workers', '1'])
+    assert rf.main() == 130
