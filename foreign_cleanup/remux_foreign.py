@@ -61,6 +61,9 @@ def mkv_identify(path):
 def validate(spec, info):
     """Confirm the file still matches the spec. Returns list of problems."""
     problems = []
+    obsolete = sorted({'subtitle_srt', 'sub_lang', 'sub_name'} & set(spec))
+    if obsolete:
+        problems.append(f"obsolete spec keys {obsolete}: use the 'subtitles' list instead")
     tracks = {t['id']: t for t in info.get('tracks') or []}
 
     def check(tid, want_type, want_lang=None, want_codec=None, label=''):

@@ -26,11 +26,15 @@ import shutil
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 from xml.etree import ElementTree as ET
+from dotenv import load_dotenv
+
+load_dotenv()
 
 
-DEFAULT_MOVIES_DIR = "/storage/media/movies"
-DEFAULT_DOCS_DIR = "/storage/media/documentaries"
-DEFAULT_MOVE_DEST = "/storage/media/working/movies"
+MEDIA_BASE = os.getenv("RC_MEDIA_BASE", "/storage/media")
+DEFAULT_MOVIES_DIR = f"{MEDIA_BASE}/movies"
+DEFAULT_DOCS_DIR = f"{MEDIA_BASE}/documentaries"
+DEFAULT_MOVE_DEST = f"{MEDIA_BASE}/working/movies"
 
 
 VIDEO_EXTS = {

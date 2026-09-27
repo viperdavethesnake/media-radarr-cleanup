@@ -10,6 +10,9 @@ from grp import getgrnam
 from pwd import getpwnam
 from shutil import which
 from typing import Iterable, List, Optional, Tuple
+from dotenv import load_dotenv
+
+load_dotenv()
 
 
 BASE = os.getenv("RC_MEDIA_BASE", "/storage/media")
@@ -248,8 +251,8 @@ def main() -> None:
         nargs="*",
         help=(
             "One or more root paths.\n"
-            "If omitted, defaults to /storage/media/{documentaries,movies,music,tvshows}.\n"
-            "If you pass /storage/media, it will expand to children and skip: working, usenet, servarr."
+            f"If omitted, defaults to {BASE}/{{documentaries,movies,music,tvshows}}.\n"
+            f"If you pass {BASE}, it will expand to children and skip: working, usenet, servarr."
         ),
     )
     parser.add_argument("--apply", action="store_true", help="Apply changes (default is dry-run).")
@@ -259,7 +262,9 @@ def main() -> None:
     if args.apply and os.geteuid() != 0:
         if which("sudo") is None:
             raise SystemExit("This operation requires root, and 'sudo' was not found.")
-        os.execvp("sudo", ["sudo", sys.executable] + sys.argv)
+        # sudo resets the environment, so carry the resolved settings across explicitly.
+        env = [f"RC_MEDIA_BASE={BASE}", f"RC_MEDIA_OWNER={OWNER}", f"RC_MEDIA_GROUP={GROUP}"]
+        os.execvp("sudo", ["sudo", "env", *env, sys.executable] + sys.argv)
 
     uid = getpwnam(OWNER).pw_uid
     gid = getgrnam(GROUP).gr_gid

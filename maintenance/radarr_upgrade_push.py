@@ -200,8 +200,8 @@ def main() -> int:
     added = 0
     failed = []
 
-    for imdb in to_add:
-        print(f"  [{added+1}/{len(to_add)}] {imdb} ", end="", flush=True)
+    for n, imdb in enumerate(to_add, 1):
+        print(f"  [{n}/{len(to_add)}] {imdb} ", end="", flush=True)
 
         try:
             movie = radarr_lookup(imdb)

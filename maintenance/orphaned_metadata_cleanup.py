@@ -7,9 +7,12 @@ import os
 from dataclasses import dataclass, asdict
 from pathlib import Path
 from typing import List, Optional
+from dotenv import load_dotenv
+
+load_dotenv()
 
 
-BASE = Path("/storage/media")
+BASE = Path(os.getenv("RC_MEDIA_BASE", "/storage/media"))
 DEFAULT_ROOTS = [
     BASE / "movies",
     BASE / "documentaries",
@@ -150,13 +153,13 @@ def main() -> None:
             "- Folder contains video => must also contain: movie.nfo + poster.jpg\n"
             "- Folder contains movie.nfo/poster.jpg but no video => orphan\n"
             "- Folder contains metadata.json/tags.xml next to video => intermediate leftovers\n\n"
-            "Defaults to scanning /storage/media/{movies,documentaries}."
+            f"Defaults to scanning {BASE}/{{movies,documentaries}}."
         )
     )
     parser.add_argument(
         "paths",
         nargs="*",
-        help="Optional root paths to scan. If omitted, uses /storage/media/{movies,documentaries}.",
+        help=f"Optional root paths to scan. If omitted, uses {BASE}/{{movies,documentaries}}.",
     )
     parser.add_argument("--json", dest="json_path", help="Write findings to JSON file.")
     parser.add_argument("--csv", dest="csv_path", help="Write findings to CSV file.")

@@ -17,6 +17,9 @@ import sys
 import csv
 import argparse
 from xml.etree.ElementTree import parse as et_parse
+from dotenv import load_dotenv
+
+load_dotenv()
 
 def normalize(s):
     """Strip punctuation, underscores, lowercase for fuzzy comparison."""

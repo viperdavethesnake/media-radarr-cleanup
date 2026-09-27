@@ -7,9 +7,12 @@ import os
 from dataclasses import dataclass, asdict
 from pathlib import Path
 from typing import List, Optional
+from dotenv import load_dotenv
+
+load_dotenv()
 
 
-TV_ROOT = Path("/storage/media/tvshows")
+TV_ROOT = Path(os.getenv("RC_MEDIA_BASE", "/storage/media")) / "tvshows"
 VIDEO_EXTS = {".mkv", ".mp4", ".m4v", ".avi", ".mov", ".wmv", ".ts"}
 
 # Accept either naming convention; your tv pipeline writes show.nfo, Jellyfin often uses tvshow.nfo
@@ -139,7 +142,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         description=(
             "TV show folder report (report-only).\n\n"
-            "For each top-level show folder under /storage/media/tvshows:\n"
+            f"For each top-level show folder under {TV_ROOT}:\n"
             "- If any episode video exists anywhere in the show subtree, the show folder should contain:\n"
             "    - poster.jpg\n"
             "    - show.nfo OR tvshow.nfo\n"
@@ -150,7 +153,7 @@ def main() -> None:
     parser.add_argument(
         "--root",
         default=str(TV_ROOT),
-        help="TV root directory (default: /storage/media/tvshows)",
+        help=f"TV root directory (default: {TV_ROOT})",
     )
     parser.add_argument("--json", dest="json_path", help="Write findings to JSON file.")
     parser.add_argument("--csv", dest="csv_path", help="Write findings to CSV file.")

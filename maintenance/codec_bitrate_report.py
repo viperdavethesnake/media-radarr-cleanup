@@ -9,9 +9,12 @@ from dataclasses import dataclass, asdict
 from pathlib import Path
 from shutil import which
 from typing import List, Optional, Tuple
+from dotenv import load_dotenv
+
+load_dotenv()
 
 
-BASE = Path("/storage/media")
+BASE = Path(os.getenv("RC_MEDIA_BASE", "/storage/media"))
 DEFAULT_ROOTS = [
     BASE / "movies",
     BASE / "documentaries",
@@ -259,13 +262,13 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         description=(
             "Generate a codec/bitrate report for media files.\n\n"
-            "Defaults to scanning /storage/media/{movies,documentaries,tvshows}."
+            f"Defaults to scanning {BASE}/{{movies,documentaries,tvshows}}."
         )
     )
     parser.add_argument(
         "paths",
         nargs="*",
-        help="Optional root paths to scan. If omitted, uses /storage/media/{movies,documentaries,tvshows}.",
+        help=f"Optional root paths to scan. If omitted, uses {BASE}/{{movies,documentaries,tvshows}}.",
     )
     parser.add_argument(
         "--prefer",
