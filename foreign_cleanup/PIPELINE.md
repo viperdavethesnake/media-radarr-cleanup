@@ -88,9 +88,10 @@ Notes:
   output.
 - Ctrl-C (or SIGTERM) on `remux_foreign.py --run` terminates every running mkvmerge,
   removes their partial output, cancels queued films, and exits 130 with a summary of
-  succeeded / failed / interrupted / not started. Rerun the same spec to pick up the
-  rest. A second Ctrl-C hard-exits. A failed or timed-out mkvmerge also has its partial
-  output removed.
+  succeeded / failed / interrupted / not started. Rerun with a spec containing only the
+  interrupted / not-started films (the summary lists them); rerunning the full spec
+  re-remuxes every film that already succeeded. A second Ctrl-C hard-exits. A failed or
+  timed-out mkvmerge also has its partial output removed.
 - `--metadata-only` regenerates NFO/artwork/tags for films already in `cleaned/` and
   reports (does not fix) a filename that differs from the computed one. It writes
   immediately, with or without `--run`.
