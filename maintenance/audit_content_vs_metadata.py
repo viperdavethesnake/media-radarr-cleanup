@@ -42,7 +42,7 @@ RUNTIME_TOLERANCE_MINUTES = 5  # Flag if actual vs. NFO runtime differ by more t
 
 def find_mkv(folder: Path) -> Path | None:
     for f in folder.iterdir():
-        if f.suffix.lower() == '.mkv':
+        if f.suffix.lower() == '.mkv' and not f.is_symlink():
             return f
     return None
 
@@ -197,7 +197,7 @@ def main():
         print(f'ERROR: not a directory: {scan_dir}')
         sys.exit(1)
 
-    folders = sorted(f for f in scan_dir.iterdir() if f.is_dir())
+    folders = sorted(f for f in scan_dir.iterdir() if f.is_dir() and not f.is_symlink())
     total = len(folders)
     print(f'Scanning {total} folders in {scan_dir}  (tolerance: ±{args.tolerance} min)\n')
 
@@ -209,7 +209,12 @@ def main():
         for future in as_completed(futures):
             completed += 1
             print(f'\r  {completed}/{total}', end='', flush=True)
-            result = future.result()
+            try:
+                result = future.result()
+            except Exception as e:
+                result = {'folder': futures[future].name, 'issue': f'audit error: {type(e).__name__}: {e}',
+                          'nfo_title': '', 'nfo_runtime_min': '', 'actual_runtime_min': '',
+                          'delta_min': '', 'imdbid': '', 'mkv_title_tag': ''}
             if result:
                 flagged.append(result)
 

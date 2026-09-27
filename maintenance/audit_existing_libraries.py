@@ -98,7 +98,7 @@ def _folder_candidates(root: str) -> List[str]:
     out: List[str] = []
     for name in entries:
         p = os.path.join(root, name)
-        if os.path.isdir(p):
+        if os.path.isdir(p) and not os.path.islink(p):
             out.append(p)
     out.sort()
     return out

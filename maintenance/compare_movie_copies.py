@@ -767,9 +767,12 @@ def index_library(root: str, side_label: str, shell: Shell, threads: int = 8) ->
         return by_key, problems
 
     with cf.ThreadPoolExecutor(max_workers=max(1, threads)) as ex:
-        futs = [ex.submit(_index_one, f, side_label, shell) for f in folders]
+        futs = {ex.submit(_index_one, f, side_label, shell): f for f in folders}
         for fut in cf.as_completed(futs):
-            ent, problem = fut.result()
+            try:
+                ent, problem = fut.result()
+            except Exception as e:
+                ent, problem = None, f"[ERROR] {side_label}: {os.path.basename(futs[fut])}: {type(e).__name__}: {e}"
             if problem:
                 problems.append(problem)
             if ent:
@@ -1341,7 +1344,10 @@ def main() -> int:
         with cf.ThreadPoolExecutor(max_workers=max(1, int(args.threads))) as ex:
             futs = {ex.submit(probe_pair, k): k for k in both_unique}
             for fut in cf.as_completed(futs):
-                k, a_sum, b_sum, notes = fut.result()
+                try:
+                    k, a_sum, b_sum, notes = fut.result()
+                except Exception as e:
+                    k, a_sum, b_sum, notes = futs[fut], None, None, [f"probe error: {type(e).__name__}: {e}"]
                 a_ent = a_index[k][0]
                 b_ent = b_index[k][0]
 

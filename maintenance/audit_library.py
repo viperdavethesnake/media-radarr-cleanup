@@ -156,8 +156,8 @@ def ffprobe_info(mkv_path: Path) -> dict:
 
 # ── per-folder audit ──────────────────────────────────────────────────────────
 
-def audit_folder(folder: Path, tolerance: int) -> dict:
-    result = {
+def _empty_result(folder: Path) -> dict:
+    return {
         'folder':       folder.name,
         'issues':       [],   # list of {'check': str, 'severity': str, 'detail': str}
         'nfo_title':    None,
@@ -169,6 +169,10 @@ def audit_folder(folder: Path, tolerance: int) -> dict:
         'mkv_name':     None,
     }
 
+
+def audit_folder(folder: Path, tolerance: int) -> dict:
+    result = _empty_result(folder)
+
     def issue(check: str, detail: str):
         result['issues'].append({
             'check':    check,
@@ -179,7 +183,7 @@ def audit_folder(folder: Path, tolerance: int) -> dict:
     folder_title, folder_year = folder_stem(folder.name)
 
     # ── Check 8: count MKVs ───────────────────────────────────────────────────
-    mkvs = [f for f in folder.iterdir() if f.suffix.lower() == '.mkv']
+    mkvs = [f for f in folder.iterdir() if f.suffix.lower() == '.mkv' and not f.is_symlink()]
     result['mkv_count'] = len(mkvs)
 
     if len(mkvs) == 0:
@@ -398,7 +402,7 @@ def main():
 
     out_prefix = Path(args.out) if args.out else Path(f'audit_{date.today().isoformat()}')
 
-    folders = sorted(f for f in scan_dir.iterdir() if f.is_dir())
+    folders = sorted(f for f in scan_dir.iterdir() if f.is_dir() and not f.is_symlink())
     total   = len(folders)
     print(f'Scanning {total} movies in {scan_dir}  (runtime tolerance ±{args.tolerance} min)\n')
 
@@ -410,7 +414,13 @@ def main():
         for future in as_completed(futures):
             completed += 1
             print(f'\r  {completed}/{total}', end='', flush=True)
-            results.append(future.result())
+            try:
+                results.append(future.result())
+            except Exception as e:
+                err = _empty_result(futures[future])
+                err['issues'].append({'check': 'audit_error', 'severity': 'CRITICAL',
+                                      'detail': f'{type(e).__name__}: {e}'})
+                results.append(err)
 
     print(f'\r  {total}/{total} done\n')
     results.sort(key=lambda r: r['folder'])

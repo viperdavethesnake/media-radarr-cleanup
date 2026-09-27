@@ -115,7 +115,7 @@ def main():
 
     folders = sorted(
         f for f in os.listdir(scan_dir)
-        if os.path.isdir(os.path.join(scan_dir, f))
+        if os.path.isdir(os.path.join(scan_dir, f)) and not os.path.islink(os.path.join(scan_dir, f))
     )
 
     mismatches = []
