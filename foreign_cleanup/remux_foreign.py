@@ -10,7 +10,7 @@ aborts that film rather than guessing.
 Dry-run by default (repo convention); --run to execute.
 """
 
-import os, sys, json, time, shutil, signal, argparse, subprocess, traceback
+import os, sys, json, time, shutil, signal, argparse, subprocess, threading, traceback
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -29,12 +29,24 @@ CLEANED_DIR = os.path.join(SERVARR_DIR, 'cleaned')
 REMUX_TIMEOUT = 3600      # per repo standard; ~2.7x headroom over projection here
 
 shutdown_requested = False
+_live_procs = set()          # mkvmerge processes currently running
+_live_lock = threading.Lock()
 
 
 def signal_handler(signum, frame):
     global shutdown_requested
+    if shutdown_requested:
+        os._exit(130)        # second signal: do not wait for cleanup
     shutdown_requested = True
-    log("⚠️ Interrupt received — in-flight mkvmerge jobs will finish or be killed by timeout")
+    with _live_lock:
+        procs = list(_live_procs)
+    for p in procs:
+        try:
+            p.terminate()
+        except OSError:
+            pass
+    log(f"⚠️ Interrupt received — terminated {len(procs)} mkvmerge process(es), "
+        f"partial output will be removed, queued films cancelled")
 
 
 signal.signal(signal.SIGINT, signal_handler)
@@ -175,11 +187,23 @@ def build_cmd(spec, src, dst):
 
 def run_mkvmerge(cmd, label):
     # 0 = ok, 1 = warnings (output still written), >=2 = fatal.
-    r = subprocess.run(cmd, capture_output=True, text=True, timeout=REMUX_TIMEOUT)
-    if r.returncode == 1:
-        log(f"⚠️ {label}: mkvmerge warnings (output kept): {(r.stdout or '').strip()[:400]}")
-    elif r.returncode >= 2:
-        raise subprocess.CalledProcessError(r.returncode, cmd, output=r.stdout, stderr=r.stderr)
+    p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    with _live_lock:
+        _live_procs.add(p)
+    try:
+        try:
+            out, err = p.communicate(timeout=REMUX_TIMEOUT)
+        except subprocess.TimeoutExpired:
+            p.kill()
+            p.wait()
+            raise
+    finally:
+        with _live_lock:
+            _live_procs.discard(p)
+    if p.returncode == 1:
+        log(f"⚠️ {label}: mkvmerge warnings (output kept): {(out or '').strip()[:400]}")
+    elif p.returncode != 0:
+        raise subprocess.CalledProcessError(p.returncode, cmd, output=out, stderr=err)
 
 
 def regen_metadata(dst_folder, dst_mkv, meta, poster_url, fanart_url, imdbid, label):
