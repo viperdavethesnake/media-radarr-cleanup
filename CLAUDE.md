@@ -123,6 +123,7 @@ Target conventions for `maintenance/` (the older scripts only partly meet them; 
 - **Artwork**: `poster.jpg` + `fanart.jpg` stored alongside media files
 - **Hardware transcoding**: NVENC via RTX 5060 Ti (16 GB), tone mapping enabled
 - **Trickplay/chapters**: generated but stored in Jellyfin data dir (not alongside media)
+- **Interactive API work**: much of the Jellyfin management is done hands-on through its API rather than by a repo script. Examples: cleaning metadata, refreshing items or libraries, fixing collections. The credentials are `JELLYFIN_URL` and `JELLYFIN_API_KEY` in `.env`; send the key in the header `X-Emby-Token: <key>`. No script reads these keys, and that is intended. Never remove them.
 
 ## Radarr Integration
 
