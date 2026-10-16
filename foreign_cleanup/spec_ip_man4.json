@@ -14,7 +14,7 @@
     "audio_secondary_name": "English",
     "subtitles": [
       {
-        "file": "/home/david/git/radarr_cleanup/foreign_cleanup/subs/Ip_Man_4_The_Finale_(2019).en.synced.srt",
+        "file": "/home/david/git/media-radarr-cleanup/foreign_cleanup/subs/Ip_Man_4_The_Finale_(2019).en.synced.srt",
         "lang": "eng",
         "name": "English",
         "default": true,

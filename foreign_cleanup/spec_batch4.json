@@ -14,7 +14,7 @@
     "audio_secondary_name": "English",
     "subtitles": [
       {
-        "file": "/home/david/git/radarr_cleanup/foreign_cleanup/subs/New_Police_Story_(2004).en.synced.srt",
+        "file": "/home/david/git/media-radarr-cleanup/foreign_cleanup/subs/New_Police_Story_(2004).en.synced.srt",
         "lang": "eng",
         "name": "English",
         "default": true,
@@ -38,7 +38,7 @@
     "audio_secondary_name": "English",
     "subtitles": [
       {
-        "file": "/home/david/git/radarr_cleanup/foreign_cleanup/subs/Once_Upon_a_Time_in_China_(1991).en.synced.srt",
+        "file": "/home/david/git/media-radarr-cleanup/foreign_cleanup/subs/Once_Upon_a_Time_in_China_(1991).en.synced.srt",
         "lang": "eng",
         "name": "English",
         "default": true,

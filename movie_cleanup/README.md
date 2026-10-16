@@ -18,11 +18,11 @@ All stage dirs and logs live under `$RC_SERVARR_DIR` (default `$RC_MEDIA_BASE/se
 `/storage/media/servarr`). The scripts can be run from any directory.
 
 ```bash
-source /home/david/git/radarr_cleanup/.venv/bin/activate
-python3 /home/david/git/radarr_cleanup/movie_cleanup/batch_cleaner.py
-python3 /home/david/git/radarr_cleanup/movie_cleanup/mkv_remux_cleanroom.py
-python3 /home/david/git/radarr_cleanup/movie_cleanup/verify_movies.py            # scans the library
-python3 /home/david/git/radarr_cleanup/movie_cleanup/verify_movies.py --scan-dir /storage/media/servarr/cleaned
+source /home/david/git/media-radarr-cleanup/.venv/bin/activate
+python3 /home/david/git/media-radarr-cleanup/movie_cleanup/batch_cleaner.py
+python3 /home/david/git/media-radarr-cleanup/movie_cleanup/mkv_remux_cleanroom.py
+python3 /home/david/git/media-radarr-cleanup/movie_cleanup/verify_movies.py            # scans the library
+python3 /home/david/git/media-radarr-cleanup/movie_cleanup/verify_movies.py --scan-dir /storage/media/servarr/cleaned
 ```
 
 `batch_cleaner.py` and `mkv_remux_cleanroom.py` take no flags. Python dependencies are the

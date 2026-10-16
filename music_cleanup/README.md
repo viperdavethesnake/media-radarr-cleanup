@@ -21,11 +21,11 @@ Stage dirs and the log live under `$RC_SERVARR_DIR` (default `$RC_MEDIA_BASE/ser
 stack triggers it.
 
 ```bash
-source /home/david/git/radarr_cleanup/.venv/bin/activate
-python3 /home/david/git/radarr_cleanup/music_cleanup/music_cleaner.py                 # end to end
-python3 /home/david/git/radarr_cleanup/music_cleanup/music_cleaner.py --no-publish    # stop at cleaned_music/
-python3 /home/david/git/radarr_cleanup/music_cleanup/music_cleaner.py --publish-only  # publish what is in cleaned_music/
-python3 /home/david/git/radarr_cleanup/music_cleanup/music_cleaner.py --no-lidarr     # publish, leave Lidarr alone
+source /home/david/git/media-radarr-cleanup/.venv/bin/activate
+python3 /home/david/git/media-radarr-cleanup/music_cleanup/music_cleaner.py                 # end to end
+python3 /home/david/git/media-radarr-cleanup/music_cleanup/music_cleaner.py --no-publish    # stop at cleaned_music/
+python3 /home/david/git/media-radarr-cleanup/music_cleanup/music_cleaner.py --publish-only  # publish what is in cleaned_music/
+python3 /home/david/git/media-radarr-cleanup/music_cleanup/music_cleaner.py --no-lidarr     # publish, leave Lidarr alone
 ```
 
 `--library DIR` overrides the destination (default `$RC_MEDIA_BASE/music`). Python

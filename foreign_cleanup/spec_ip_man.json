@@ -13,7 +13,7 @@
     "audio_secondary_codec": "A_DTS",
     "subtitles": [
       {
-        "file": "/home/david/git/radarr_cleanup/foreign_cleanup/subs/Ip_Man_(2008).en.srt",
+        "file": "/home/david/git/media-radarr-cleanup/foreign_cleanup/subs/Ip_Man_(2008).en.srt",
         "lang": "eng",
         "name": "English",
         "default": true,
@@ -36,7 +36,7 @@
     "audio_secondary_codec": "A_DTS",
     "subtitles": [
       {
-        "file": "/home/david/git/radarr_cleanup/foreign_cleanup/subs/Ip_Man_2_(2010).en.srt",
+        "file": "/home/david/git/media-radarr-cleanup/foreign_cleanup/subs/Ip_Man_2_(2010).en.srt",
         "lang": "eng",
         "name": "English",
         "default": true,
@@ -59,7 +59,7 @@
     "audio_secondary_codec": "A_DTS",
     "subtitles": [
       {
-        "file": "/home/david/git/radarr_cleanup/foreign_cleanup/subs/Ip_Man_3_(2015).en.srt",
+        "file": "/home/david/git/media-radarr-cleanup/foreign_cleanup/subs/Ip_Man_3_(2015).en.srt",
         "lang": "eng",
         "name": "English",
         "default": true,

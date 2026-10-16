@@ -7,7 +7,7 @@ ZFS-backed media server; paths default to that box and are overridable via `.env
 ## Layout
 
 ```
-radarr_cleanup/
+media-radarr-cleanup/
 ├── movie_cleanup/      batch_cleaner.py → mkv_remux_cleanroom.py → verify_movies.py  (+ helpers/)
 ├── tv_cleanup/         tv_batch_cleaner.py → tv_mkv_remux_cleanroom.py
 ├── music_cleanup/      music_cleaner.py (Lidarr → ALAC → library → Lidarr handoff)
@@ -42,7 +42,7 @@ the library is a manual step.
 ## Setup
 
 ```bash
-cd /home/david/git/radarr_cleanup
+cd /home/david/git/media-radarr-cleanup
 python3 -m venv .venv && source .venv/bin/activate      # Python 3.13 or 3.14
 pip install -r requirements.txt
 cp .env.example .env                                    # then fill in the API keys

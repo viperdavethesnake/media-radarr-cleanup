@@ -17,9 +17,9 @@ All stage dirs and logs live under `$RC_SERVARR_DIR` (default `$RC_MEDIA_BASE/se
 `/storage/media/servarr`). The scripts take no flags and can be run from any directory.
 
 ```bash
-source /home/david/git/radarr_cleanup/.venv/bin/activate
-python3 /home/david/git/radarr_cleanup/tv_cleanup/tv_batch_cleaner.py
-python3 /home/david/git/radarr_cleanup/tv_cleanup/tv_mkv_remux_cleanroom.py
+source /home/david/git/media-radarr-cleanup/.venv/bin/activate
+python3 /home/david/git/media-radarr-cleanup/tv_cleanup/tv_batch_cleaner.py
+python3 /home/david/git/media-radarr-cleanup/tv_cleanup/tv_mkv_remux_cleanroom.py
 ```
 
 Python dependencies are the repo's shared set (`requirements.txt`).

@@ -13,14 +13,14 @@
     "audio_secondary_codec": "A_DTS",
     "subtitles": [
       {
-        "file": "/home/david/git/radarr_cleanup/foreign_cleanup/subs/All_Quiet_on_the_Western_Front_(2022).en.srt",
+        "file": "/home/david/git/media-radarr-cleanup/foreign_cleanup/subs/All_Quiet_on_the_Western_Front_(2022).en.srt",
         "lang": "eng",
         "name": "English",
         "default": true,
         "forced": false
       },
       {
-        "file": "/home/david/git/radarr_cleanup/foreign_cleanup/subs/All_Quiet_on_the_Western_Front_(2022).en.forced.srt",
+        "file": "/home/david/git/media-radarr-cleanup/foreign_cleanup/subs/All_Quiet_on_the_Western_Front_(2022).en.forced.srt",
         "lang": "eng",
         "name": "English [Forced]",
         "default": false,
