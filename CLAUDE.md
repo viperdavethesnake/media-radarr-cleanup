@@ -43,7 +43,7 @@ python3 music_cleanup/music_cleaner.py --no-publish # stop at cleaned_music/ (--
 
 ```
 
-There are no automated tests. Use the helper scripts in `movie_cleanup/helpers/` to spot-check and debug (e.g., `peek_mkvinfo.py`, `spot_check_movies.py`). The old `tv_cleanup/helpers/` (hardcoded single-show migration scripts) was deleted 2026-07; recover from git history if ever needed.
+Unit tests live in `maintenance/tests/`, `movie_cleanup/tests/` and `music_cleanup/tests/`; run `python -m pytest` from the repo root (pytest is not in `requirements.txt`). For everything else, use the helper scripts in `movie_cleanup/helpers/` to spot-check and debug (e.g., `peek_mkvinfo.py`, `spot_check_movies.py`). The old `tv_cleanup/helpers/` (hardcoded single-show migration scripts) was deleted 2026-07; recover from git history if ever needed.
 
 ## Configuration
 
@@ -105,7 +105,7 @@ Python packages: `requests`, `python-dotenv`, `mutagen` (see `requirements.txt`)
 ## Maintenance Script Conventions
 
 Target conventions for `maintenance/` (the older scripts only partly meet them; the root README's table says which flags each one actually has):
-- Read-only by default. The destructive flag is `--apply` (`fix_media_perms.py`, `compare_movie_copies.py`), `--run` (`regenerate_nfos.py`, `radarr_upgrade_push.py`) or `--move-bad` (`audit_existing_libraries.py`). `regenerate_nfos.py` requires one of `--audit`/`--run` explicitly.
+- Read-only by default. The destructive flag is `--apply` (`fix_media_perms.py`), `--run` (`regenerate_nfos.py`, `radarr_upgrade_push.py`) or `--move-bad` (`audit_existing_libraries.py`). `regenerate_nfos.py` requires one of `--audit`/`--run` explicitly.
 - `--json` / `--csv` export and `--limit N` where they make sense (not all scripts have them; `audit_library.py` uses `--out PREFIX` instead).
 - `ThreadPoolExecutor` for I/O-bound scans; only `audit_decode_integrity.py` and `regenerate_nfos.py` install `SIGINT`/`SIGTERM` handlers.
 - Errors accumulate and report at the end. The one script that still aborts on a single failure is `radarr_upgrade_push.py` when the initial movie-list fetch fails.
@@ -135,7 +135,7 @@ Target conventions for `maintenance/` (the older scripts only partly meet them; 
 
 ### Workflow: Add net-new or upgrade movies to Radarr
 
-Use `maintenance/radarr_upgrade_push.py`. It reads saved `compare_movie_copies.py --details` output, extracts IMDb IDs for net-new titles (section 1) and `KEEP NEW` recommendations with `confidence=high` (section 3), skips anything already in Radarr, and adds the rest with profile "Mine" and `addOptions.searchForMovie` so the search starts immediately. Without `--details` there is no section 3 and only net-new titles are pushed.
+Use `maintenance/radarr_upgrade_push.py`. It reads saved `compare_movie_copies.py --details` output, extracts IMDb IDs for net-new titles (section 1) and `KEEP NEW` recommendations with `confidence=high` (section 3), skips anything already in Radarr, and adds the rest with profile "Mine" and `addOptions.searchForMovie` so the search starts immediately. Without `--details` there is no section 3 and only net-new titles are pushed. `compare_movie_copies.py` is read-only (the old `--apply` was removed 2026-10); its ranking rules are in its module docstring, and `REVIEW` verdicts (different runtime, no English audio, failed probe) are never pushed.
 
 ```bash
 # 1. Run the library comparison (both sides are remote SSH hosts)

@@ -138,10 +138,9 @@ def parse_all_imdb_ids(path: str) -> List[str]:
                     if m:
                         current_imdb = m.group(1)
                 elif "RECOMMEND: KEEP NEW" in line and current_imdb:
-                    # Only push high-confidence upgrades: compare's own --apply
-                    # requires confidence == high, and a Radarr add triggers an
-                    # immediate download — it should not be gated more loosely
-                    # than the local replace.
+                    # Only push high-confidence upgrades: a Radarr add triggers
+                    # an immediate download, so medium-confidence verdicts
+                    # (small bitrate gaps, audio-only wins) stay manual.
                     cm = re.search(r"confidence=(\w+)", line)
                     if cm and cm.group(1) != "high":
                         low_conf_skipped += 1

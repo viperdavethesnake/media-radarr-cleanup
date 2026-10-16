@@ -7,21 +7,24 @@ PathB (older copies): /storage/media/movies,/storage/media/movies2 (default)
 
 PathB accepts multiple comma-separated roots, since the cold-storage migration
 split older titles across two datasets (movies + movies2). All roots are merged
-into a single EXISTING index for matching; --apply replaces a matched movie in
-place in whichever root it was actually found in.
+into a single EXISTING index for matching.
 
 Either or both paths may be remote — pass --ssh-a user@host or --ssh-b user@host
 to run filesystem ops and ffprobe/mkvmerge over SSH for that side (same SSH host
 is used for every comma-separated path-b root).
 
-Default run is read-only: prints a side-by-side summary and writes a JSON
-plan to $RC_SERVARR_DIR/logs/compare_plan_<ts>.json.
+Read-only: prints a side-by-side summary and writes a JSON record of every
+decision to $RC_SERVARR_DIR/logs/compare_plan_<ts>.json. Acting on the
+recommendations is manual.
 
-With --apply, HIGH-confidence, imdb-keyed recommendations are executed:
-  KEEP NEW      -> fix_media_perms on the new folder, then replace the
-                   existing folder with the new one.
-  KEEP EXISTING -> delete the new folder.
-Anything else (TIE, lower confidence, weak key) is skipped.
+Ranking (recommend_keep):
+  1. REVIEW if runtimes differ by > 2 min, either copy lacks English audio,
+     or either probe failed.
+  2. Video, first difference wins: resolution tier (crop ignored) > HDR
+     (DV > HDR10+ > HDR10 > HLG > SDR) > remux vs encode > codec-adjusted
+     bitrate (>= 25% gap; >= 50% is high confidence).
+  3. Audio (lossless > Atmos > channels) decides a video tie, and overrides a
+     bitrate win under 50% when only the other copy has lossless audio.
 
 Requires external tools (locally or on the SSH host):
 - ffprobe (from FFmpeg)
@@ -37,7 +40,6 @@ import json
 import os
 import re
 import shlex
-import shutil
 import subprocess
 import sys
 import tempfile
@@ -384,12 +386,12 @@ def _parse_ratio(r: Any) -> Optional[float]:
     return None
 
 
-def _codec_rank(codec: str) -> int:
+def _codec_rank(codec: str, profile: str = "") -> int:
     c = (codec or "").lower()
     # Lower is better.
     if "truehd" in c:
         return 0
-    if "dts" in c and ("hd" in c or "ma" in c):
+    if "dts" in c and "hd" in (profile or "").lower():
         return 1
     if "dts" in c:
         return 2
@@ -419,6 +421,7 @@ class TrackSummary:
     lang: str
     codec: str
     codec_long: str
+    profile: str
     channels: str
     sample_rate_hz: Optional[int]
     bitrate_bps: Optional[int]
@@ -442,6 +445,7 @@ class MediaSummary:
     v_pix_fmt: str
     v_bitrate_bps: Optional[int]
     v_hdr_format: str  # DV / HDR10+ / HDR10 / HLG / SDR / ?
+    v_dv_profile: str  # e.g. "8.1"; reported only, not ranked
     v_color_primaries: str
     v_color_transfer: str
     v_colorspace: str
@@ -467,6 +471,51 @@ def _ffprobe(mkv_path: str, shell: Shell) -> Dict[str, Any]:
 
 def _mkvmerge_json(mkv_path: str, shell: Shell) -> Dict[str, Any]:
     return shell.run_json(["mkvmerge", "-J", mkv_path], timeout=60)
+
+
+def _stream_bitrate(s: Dict[str, Any]) -> Optional[int]:
+    # MKV rarely carries a stream bit_rate; mkvmerge writes a BPS statistics tag instead.
+    br = _safe_int(s.get("bit_rate"))
+    if br:
+        return br
+    tags = s.get("tags") or {}
+    for k in ("BPS", "BPS-eng"):
+        br = _safe_int(tags.get(k))
+        if br:
+            return br
+    return None
+
+
+def _frames_have_hdr10plus(frames_json: Dict[str, Any]) -> bool:
+    for fr in frames_json.get("frames") or []:
+        for sd in fr.get("side_data_list") or []:
+            if "2094-40" in str(sd.get("side_data_type") or ""):
+                return True
+    return False
+
+
+def _probe_hdr10plus(mkv_path: str, shell: Shell) -> bool:
+    # HDR10+ is per-frame metadata; it never appears in stream-level side data.
+    cmd = [
+        "ffprobe", "-v", "quiet", "-print_format", "json",
+        "-select_streams", "v:0", "-read_intervals", "%+#1",
+        "-show_entries", "frame_side_data=side_data_type", mkv_path,
+    ]
+    try:
+        return _frames_have_hdr10plus(shell.run_json(cmd, timeout=60))
+    except Exception:
+        return False
+
+
+def _dv_profile(v: Dict[str, Any]) -> str:
+    for sd in v.get("side_data_list") or []:
+        if "dovi" in str(sd.get("side_data_type") or "").lower():
+            prof = sd.get("dv_profile")
+            compat = sd.get("dv_bl_signal_compatibility_id")
+            if prof is None:
+                return ""
+            return f"{prof}.{compat}" if compat else str(prof)
+    return ""
 
 
 def _bit_depth_from_pix_fmt(pix_fmt: str) -> Optional[int]:
@@ -566,6 +615,7 @@ def _collect_audio_tracks(ffp: Dict[str, Any], mkv: Dict[str, Any]) -> List[Trac
         lang = (tags.get("language") or "").lower()
         codec = (s.get("codec_name") or "").lower() or "?"
         codec_long = (s.get("codec_long_name") or "").strip()
+        profile = str(s.get("profile") or "").strip()
         ch = s.get("channels")
         layout = s.get("channel_layout")
         ch_s = "?"
@@ -575,7 +625,7 @@ def _collect_audio_tracks(ffp: Dict[str, Any], mkv: Dict[str, Any]) -> List[Trac
                 ch_s = f"{ch_s}ch({layout})"
 
         sample_rate_hz = _safe_int(s.get("sample_rate"))
-        bitrate_bps = _safe_int(s.get("bit_rate"))
+        bitrate_bps = _stream_bitrate(s)
 
         title = ""
         default = False
@@ -593,6 +643,8 @@ def _collect_audio_tracks(ffp: Dict[str, Any], mkv: Dict[str, Any]) -> List[Trac
             atmos = True
         if codec in {"truehd", "eac3", "ec-3"} and ("joc" in title_l or "dolby atmos" in title_l):
             atmos = True
+        if "atmos" in profile.lower():
+            atmos = True
 
         out.append(
             TrackSummary(
@@ -600,6 +652,7 @@ def _collect_audio_tracks(ffp: Dict[str, Any], mkv: Dict[str, Any]) -> List[Trac
                 lang=lang or "und",
                 codec=codec,
                 codec_long=codec_long,
+                profile=profile,
                 channels=ch_s,
                 sample_rate_hz=sample_rate_hz,
                 bitrate_bps=bitrate_bps,
@@ -617,7 +670,7 @@ def _pick_best_audio(tracks: List[TrackSummary]) -> Optional[int]:
 
     def score(t: TrackSummary) -> Tuple[int, int, int]:
         lang_pen = 0 if _is_english(t.lang) else 1
-        cr = _codec_rank(t.codec)
+        cr = _codec_rank(t.codec, t.profile)
         def_pen = 0 if t.default else 1
         return (lang_pen, cr, def_pen)
 
@@ -650,7 +703,7 @@ def summarize_media(mkv_path: str, shell: Shell) -> MediaSummary:
     v_res = f"{w}x{h}" if w and h else "?"
     v_pix_fmt = str(v.get("pix_fmt") or "").strip()
     v_bit_depth = _bit_depth_from_pix_fmt(v_pix_fmt)
-    v_bitrate_bps = _safe_int(v.get("bit_rate"))
+    v_bitrate_bps = _stream_bitrate(v)
 
     v_fps = _parse_ratio(v.get("avg_frame_rate")) or _parse_ratio(v.get("r_frame_rate"))
 
@@ -659,6 +712,9 @@ def summarize_media(mkv_path: str, shell: Shell) -> MediaSummary:
     v_colorspace = str(v.get("colorspace") or "").strip()
 
     v_hdr_format, mastering_sd, cll_sd = _detect_hdr_format(v)
+    if v_hdr_format == "HDR10" and _probe_hdr10plus(mkv_path, shell):
+        v_hdr_format = "HDR10+"
+    v_dv_profile = _dv_profile(v)
     v_mastering = _fmt_mastering(mastering_sd)
     v_maxcll, v_maxfall = _extract_maxcll_maxfall(cll_sd)
 
@@ -678,6 +734,7 @@ def summarize_media(mkv_path: str, shell: Shell) -> MediaSummary:
         v_pix_fmt=v_pix_fmt,
         v_bitrate_bps=v_bitrate_bps,
         v_hdr_format=v_hdr_format,
+        v_dv_profile=v_dv_profile,
         v_color_primaries=v_color_primaries,
         v_color_transfer=v_color_transfer,
         v_colorspace=v_colorspace,
@@ -840,7 +897,7 @@ def _fmt_video(ms: MediaSummary) -> str:
 
 
 def _fmt_hdr(ms: MediaSummary) -> str:
-    parts = [f"hdr: {ms.v_hdr_format}"]
+    parts = [f"hdr: {ms.v_hdr_format}" + (f" P{ms.v_dv_profile}" if ms.v_dv_profile else "")]
     if ms.v_color_primaries:
         parts.append(f"prim={ms.v_color_primaries}")
     if ms.v_color_transfer:
@@ -855,11 +912,19 @@ def _fmt_hdr(ms: MediaSummary) -> str:
     return " ".join(parts)
 
 
-def _parse_res_pixels(res: str) -> int:
+def _res_tier(res: str) -> int:
+    """Resolution class from width OR height, so a cropped 3840x1600 is still 2160p."""
     m = re.match(r"(\d+)x(\d+)", res or "")
     if not m:
         return 0
-    return int(m.group(1)) * int(m.group(2))
+    w, h = int(m.group(1)), int(m.group(2))
+    if w >= 3200 or h >= 2000:
+        return 2160
+    if w >= 1700 or h >= 1000:
+        return 1080
+    if w >= 1200 or h >= 700:
+        return 720
+    return 480
 
 
 def _hdr_rank(h: str) -> int:
@@ -876,17 +941,28 @@ def _hdr_rank(h: str) -> int:
     return order.get(h, -1)
 
 
-def _vcodec_rank(c: str) -> int:
-    c = (c or "").lower()
-    if c == "av1":
-        return 4
-    if c in {"hevc", "h265", "h.265"}:
-        return 3
-    if c in {"h264", "avc", "h.264"}:
-        return 2
-    if c in {"mpeg2video", "mpeg2"}:
-        return 1
-    return 0
+# Rough efficiency relative to h264, so bitrates are compared like for like.
+_CODEC_EFFICIENCY = {"av1": 2.0, "hevc": 1.5, "h264": 1.0, "vc1": 1.0, "mpeg2video": 0.5}
+
+# Video bitrate at or above which a copy is treated as a disc remux. UHD discs
+# are HEVC only; 1080p discs are h264/vc1/mpeg2 (some HEVC). AV1 never is.
+_REMUX_MIN_BPS = {2160: 40_000_000, 1080: 18_000_000}
+
+RUNTIME_REVIEW_S = 120
+BITRATE_WIN_RATIO = 1.25
+BITRATE_HIGH_RATIO = 1.50
+
+
+def _is_remux(ms: MediaSummary, vbr: Optional[int]) -> bool:
+    floor = _REMUX_MIN_BPS.get(_res_tier(ms.v_res))
+    return bool(floor and vbr and ms.v_codec != "av1" and vbr >= floor)
+
+
+def _is_lossless(t: TrackSummary) -> bool:
+    c = (t.codec or "").lower()
+    if c in {"truehd", "mlp", "flac", "alac"} or c.startswith("pcm_"):
+        return True
+    return c == "dts" and "hd ma" in (t.profile or "").lower().replace("-", " ")
 
 
 def _audio_channels_count(chs: str) -> int:
@@ -908,98 +984,120 @@ def _best_audio(ms: MediaSummary) -> Optional[TrackSummary]:
 
 
 def _video_bitrate_effective_bps(ms: MediaSummary) -> Tuple[Optional[int], bool]:
-    """Returns (bps, used_proxy). Proxy = file_size/duration (rough but useful for comparisons)."""
+    """Returns (bps, used_proxy). Proxy = file_size/duration minus known audio bitrates."""
     if ms.v_bitrate_bps and ms.v_bitrate_bps > 0:
         return ms.v_bitrate_bps, False
     if ms.size_bytes and ms.duration_s and ms.duration_s > 0:
-        return int((ms.size_bytes * 8) / ms.duration_s), True
+        total = int((ms.size_bytes * 8) / ms.duration_s)
+        audio = sum(t.bitrate_bps or 0 for t in ms.audio_tracks)
+        return max(total - audio, 0) or None, True
     return None, True
+
+
+def _audio_key(t: TrackSummary) -> Tuple[int, int, int]:
+    return (int(_is_lossless(t)), int(t.atmos), _audio_channels_count(t.channels))
+
+
+def _audio_reason(new: TrackSummary, ex: TrackSummary) -> str:
+    def desc(t: TrackSummary) -> str:
+        parts = [t.codec + (f" ({t.profile})" if t.profile and t.profile != "unknown" else "")]
+        if t.atmos:
+            parts.append("Atmos")
+        parts.append(t.channels)
+        return " ".join(parts)
+    return f"{SIDE_NEW}={desc(new)} vs {SIDE_EXISTING}={desc(ex)}"
 
 
 def recommend_keep(new: MediaSummary, existing: MediaSummary) -> Tuple[str, str, List[str], str]:
     """
     Returns (keep, basis, reasons, confidence)
-    keep: "NEW" | "EXISTING" | "TIE"
-    basis: "video" | "audio" | "tie"
+    keep: "NEW" | "EXISTING" | "TIE" | "REVIEW"
+    basis: the rule that decided it — "runtime" | "language" | "resolution" | "hdr" |
+           "source" | "bitrate" | "audio" | "tie"
     confidence: "high" | "medium" | "low"
     """
-    reasons: List[str] = []
-    confidence = "high"
+    def side(new_wins: bool) -> str:
+        return SIDE_NEW if new_wins else SIDE_EXISTING
 
-    # 1) VIDEO-FIRST comparison (dominant)
-    new_px = _parse_res_pixels(new.v_res)
-    ex_px = _parse_res_pixels(existing.v_res)
-    if new_px != ex_px:
-        keep = SIDE_NEW if new_px > ex_px else SIDE_EXISTING
-        reasons.append(f"{keep}: higher resolution ({SIDE_NEW}={new.v_res} vs {SIDE_EXISTING}={existing.v_res})")
-        return keep, "video", reasons, confidence
+    # 1) Are these even the same thing?
+    if new.duration_s and existing.duration_s:
+        gap = abs(new.duration_s - existing.duration_s)
+        if gap > RUNTIME_REVIEW_S:
+            return "REVIEW", "runtime", [
+                f"runtimes differ by {gap / 60:.1f} min ({SIDE_NEW}={_fmt_duration(new.duration_s)} vs "
+                f"{SIDE_EXISTING}={_fmt_duration(existing.duration_s)}): different cut, speed-up, or truncated"
+            ], "low"
+    no_eng = [lbl for lbl, s in ((SIDE_NEW, new), (SIDE_EXISTING, existing))
+              if not any(_is_english(t.lang) for t in s.audio_tracks)]
+    if no_eng:
+        return "REVIEW", "language", [f"no English audio in {', '.join(no_eng)}"], "low"
 
-    new_hdr = _hdr_rank(new.v_hdr_format)
-    ex_hdr = _hdr_rank(existing.v_hdr_format)
+    # 2) Video, first difference wins
+    new_tier, ex_tier = _res_tier(new.v_res), _res_tier(existing.v_res)
+    if new_tier != ex_tier:
+        keep = side(new_tier > ex_tier)
+        return keep, "resolution", [
+            f"{keep}: higher resolution ({SIDE_NEW}={new.v_res} vs {SIDE_EXISTING}={existing.v_res})"
+        ], "high"
+
+    new_hdr, ex_hdr = _hdr_rank(new.v_hdr_format), _hdr_rank(existing.v_hdr_format)
     if new_hdr != ex_hdr:
-        keep = SIDE_NEW if new_hdr > ex_hdr else SIDE_EXISTING
-        reasons.append(f"{keep}: better HDR ({SIDE_NEW}={new.v_hdr_format} vs {SIDE_EXISTING}={existing.v_hdr_format})")
-        return keep, "video", reasons, confidence
-
-    if new.v_bit_depth and existing.v_bit_depth and new.v_bit_depth != existing.v_bit_depth:
-        keep = SIDE_NEW if new.v_bit_depth > existing.v_bit_depth else SIDE_EXISTING
-        reasons.append(
-            f"{keep}: higher bit depth ({SIDE_NEW}={new.v_bit_depth}-bit vs {SIDE_EXISTING}={existing.v_bit_depth}-bit)"
-        )
-        return keep, "video", reasons, confidence
-    if (new.v_bit_depth is None) != (existing.v_bit_depth is None):
-        confidence = "medium"
-
-    new_vc = _vcodec_rank(new.v_codec)
-    ex_vc = _vcodec_rank(existing.v_codec)
-    if new_vc != ex_vc:
-        keep = SIDE_NEW if new_vc > ex_vc else SIDE_EXISTING
-        reasons.append(f"{keep}: better video codec ({SIDE_NEW}={new.v_codec} vs {SIDE_EXISTING}={existing.v_codec})")
-        return keep, "video", reasons, confidence
+        keep = side(new_hdr > ex_hdr)
+        conf = "medium" if min(new_hdr, ex_hdr) < 0 else "high"
+        return keep, "hdr", [
+            f"{keep}: better HDR ({SIDE_NEW}={new.v_hdr_format} vs {SIDE_EXISTING}={existing.v_hdr_format})"
+        ], conf
 
     new_vbr, new_proxy = _video_bitrate_effective_bps(new)
     ex_vbr, ex_proxy = _video_bitrate_effective_bps(existing)
-    if new_proxy or ex_proxy:
-        confidence = "medium" if confidence == "high" else confidence
+    proxy = new_proxy or ex_proxy
+    suffix = " (estimated)" if proxy else ""
+
+    new_remux, ex_remux = _is_remux(new, new_vbr), _is_remux(existing, ex_vbr)
+    if new_remux != ex_remux:
+        keep = side(new_remux)
+        return keep, "source", [
+            f"{keep}: remux vs encode{suffix} ({SIDE_NEW}={new.v_codec} {_human_bps(new_vbr)} vs "
+            f"{SIDE_EXISTING}={existing.v_codec} {_human_bps(ex_vbr)})"
+        ], "medium" if proxy else "high"
+
+    video_keep = None
+    video_reason = ""
+    video_conf = "high"
     if new_vbr and ex_vbr:
-        hi = max(new_vbr, ex_vbr)
-        lo = min(new_vbr, ex_vbr)
-        if lo > 0 and (hi / lo) >= 1.10:
-            keep = SIDE_NEW if new_vbr > ex_vbr else SIDE_EXISTING
-            suffix = " (proxy)" if (new_proxy or ex_proxy) else ""
-            reasons.append(
-                f"{keep}: higher effective bitrate{suffix} ({SIDE_NEW}={_human_bps(new_vbr)} vs {SIDE_EXISTING}={_human_bps(ex_vbr)})"
+        new_eff = new_vbr * _CODEC_EFFICIENCY.get(new.v_codec, 1.0)
+        ex_eff = ex_vbr * _CODEC_EFFICIENCY.get(existing.v_codec, 1.0)
+        ratio = max(new_eff, ex_eff) / min(new_eff, ex_eff)
+        if ratio >= BITRATE_WIN_RATIO:
+            video_keep = side(new_eff > ex_eff)
+            video_conf = "high" if ratio >= BITRATE_HIGH_RATIO and not proxy else "medium"
+            video_reason = (
+                f"{video_keep}: higher codec-adjusted video bitrate{suffix}, {ratio:.2f}x "
+                f"({SIDE_NEW}={new.v_codec} {_human_bps(new_vbr)} vs "
+                f"{SIDE_EXISTING}={existing.v_codec} {_human_bps(ex_vbr)})"
             )
-            return keep, "video", reasons, confidence
     else:
-        confidence = "low"
+        video_conf = "low"
 
-    # 2) AUDIO tie-breaker
-    bn = _best_audio(new)
-    be = _best_audio(existing)
-    if not bn or not be:
-        confidence = "low"
-        return "TIE", "tie", ["video and audio could not be compared reliably"], confidence
+    # 3) Audio: overrides a small bitrate win, or breaks a video tie
+    bn, be = _best_audio(new), _best_audio(existing)
+    if video_keep:
+        if video_conf != "high" and bn and be and _is_lossless(bn) != _is_lossless(be):
+            keep = side(_is_lossless(bn))
+            if keep != video_keep:
+                return keep, "audio", [
+                    f"{keep}: lossless audio outweighs a small video bitrate gap ({_audio_reason(bn, be)})",
+                    video_reason,
+                ], "medium"
+        return video_keep, "bitrate", [video_reason], video_conf
 
-    if _codec_rank(bn.codec) != _codec_rank(be.codec):
-        keep = SIDE_NEW if _codec_rank(bn.codec) < _codec_rank(be.codec) else SIDE_EXISTING
-        reasons.append(f"{keep}: better audio codec ({SIDE_NEW}={bn.codec} vs {SIDE_EXISTING}={be.codec})")
-        return keep, "audio", reasons, confidence
+    if bn and be and _audio_key(bn) != _audio_key(be):
+        keep = side(_audio_key(bn) > _audio_key(be))
+        return keep, "audio", [f"{keep}: better audio ({_audio_reason(bn, be)})"], "medium"
 
-    if bn.atmos != be.atmos:
-        keep = SIDE_NEW if bn.atmos else SIDE_EXISTING
-        reasons.append(f"{keep}: Atmos present ({SIDE_NEW}={bn.atmos} vs {SIDE_EXISTING}={be.atmos})")
-        return keep, "audio", reasons, confidence
-
-    new_ch = _audio_channels_count(bn.channels)
-    ex_ch = _audio_channels_count(be.channels)
-    if new_ch != ex_ch:
-        keep = SIDE_NEW if new_ch > ex_ch else SIDE_EXISTING
-        reasons.append(f"{keep}: more audio channels ({SIDE_NEW}={bn.channels} vs {SIDE_EXISTING}={be.channels})")
-        confidence = "medium" if confidence == "high" else confidence
-        return keep, "audio", reasons, confidence
-
-    return "TIE", "tie", [f"{SIDE_NEW} and {SIDE_EXISTING} appear equivalent for video-first rules"], confidence
+    if video_conf == "low":
+        return "TIE", "tie", ["video bitrate unknown on one side and audio equivalent"], "low"
+    return "TIE", "tie", [f"{SIDE_NEW} and {SIDE_EXISTING} appear equivalent"], "high"
 
 
 def _fmt_duration(dur_s: Optional[float]) -> str:
@@ -1043,23 +1141,6 @@ class CompareResult:
     confidence: str
 
 
-def _is_applicable(r: CompareResult) -> bool:
-    """Eligible for --apply: high-confidence, imdb-keyed, non-tie, and both sides probed."""
-    return (
-        r.keep in (SIDE_NEW, SIDE_EXISTING)
-        and r.confidence == "high"
-        and r.key[0] == "imdb"
-        and r.a_sum is not None
-        and r.b_sum is not None
-    )
-
-
-def _planned_action(r: CompareResult) -> str:
-    if not _is_applicable(r):
-        return "skip"
-    return "replace_existing" if r.keep == SIDE_NEW else "delete_new"
-
-
 def _write_plan_file(
     path: str,
     path_new: str,
@@ -1084,8 +1165,6 @@ def _write_plan_file(
             "notes": list(r.notes),
             "new_folder": r.a_ent.folder,
             "existing_folder": r.b_ent.folder,
-            "applicable": _is_applicable(r),
-            "action": _planned_action(r),
         })
 
     plan = {
@@ -1106,77 +1185,9 @@ def _write_plan_file(
         json.dump(plan, f, indent=2, ensure_ascii=False)
 
 
-def _fix_perms_on(folder: str) -> None:
-    """Shell out to fix_media_perms.py --apply on a single folder. We are already root when called."""
-    script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fix_media_perms.py")
-    subprocess.run([sys.executable, script, "--apply", folder], check=True)
-
-
-def _apply_one(r: CompareResult) -> Tuple[bool, str]:
-    """Execute a single applicable result. Returns (applied, message).
-
-    Replacement always happens in place: the target root is derived from the
-    matched EXISTING folder's own parent directory, not a fixed library path.
-    This matters once EXISTING spans multiple roots (e.g. movies + movies2) —
-    a match found in movies2 must stay in movies2, not get relocated to movies.
-    """
-    title_str = r.a_ent.title or r.b_ent.title or r.key[1]
-    year_str = r.a_ent.year or r.b_ent.year or ""
-    label = f"{title_str} ({year_str})".strip()
-
-    if r.keep == SIDE_NEW:
-        new_folder = os.path.normpath(r.a_ent.folder)
-        existing_folder = os.path.normpath(r.b_ent.folder)
-        library_root = os.path.dirname(existing_folder)
-        target = os.path.join(library_root, os.path.basename(new_folder))
-
-        # Safety: if the target name collides with some third folder (not the existing match), refuse.
-        if (
-            os.path.abspath(target) != os.path.abspath(existing_folder)
-            and os.path.exists(target)
-        ):
-            return False, f"target exists and is not the matched existing folder: {target}"
-
-        _fix_perms_on(new_folder)
-        if os.path.isdir(existing_folder):
-            shutil.rmtree(existing_folder)
-        shutil.move(new_folder, target)
-        return True, f"KEEP NEW  :: {label} -> {target}"
-
-    if r.keep == SIDE_EXISTING:
-        new_folder = r.a_ent.folder
-        shutil.rmtree(new_folder)
-        return True, f"KEEP EXISTING :: {label} (deleted {new_folder})"
-
-    return False, "unsupported keep value"
-
-
-def _apply_results(results: List[CompareResult]) -> Tuple[int, int, int]:
-    applied = 0
-    skipped = 0
-    errors = 0
-    for r in results:
-        if not _is_applicable(r):
-            skipped += 1
-            continue
-        try:
-            ok, msg = _apply_one(r)
-        except Exception as e:
-            errors += 1
-            print(f"[APPLY-ERR] {r.key[0]}:{r.key[1]}: {e}")
-            continue
-        if ok:
-            applied += 1
-            print(f"[APPLY] {msg}")
-        else:
-            skipped += 1
-            print(f"[APPLY-SKIP] {r.key[0]}:{r.key[1]}: {msg}")
-    return applied, skipped, errors
-
-
 def main() -> int:
     ap = argparse.ArgumentParser(
-        description="Compare movie copies in two libraries; optionally apply HIGH-confidence recommendations.",
+        description="Compare movie copies in two libraries and recommend which to keep (read-only).",
         epilog=(
             "SSH tip: add 'ControlMaster auto' + 'ControlPersist 60s' to ~/.ssh/config "
             "to share connections and avoid per-probe handshake overhead."
@@ -1208,32 +1219,7 @@ def main() -> int:
         action="store_true",
         help="Only match movies by IMDb id (skip title/year matches).",
     )
-    ap.add_argument(
-        "--apply",
-        action="store_true",
-        help=(
-            "Execute HIGH-confidence, imdb-keyed recommendations (destructive): "
-            "fix perms on NEW + replace EXISTING, or delete NEW. "
-            "Requires root; auto re-execs under sudo."
-        ),
-    )
     args = ap.parse_args()
-
-    # --apply executes local shutil.rmtree/move on the indexed paths; running it
-    # against paths that were enumerated over SSH would delete/move same-named
-    # LOCAL folders instead of the remote ones. Refuse the combination outright.
-    if args.apply and (args.ssh_a or args.ssh_b):
-        print("ERROR: --apply only supports local paths (it runs local filesystem "
-              "operations). Re-run without --ssh-a/--ssh-b on the host that owns "
-              "the libraries.", file=sys.stderr)
-        return 2
-
-    # --apply is destructive and needs root (for chown via fix_media_perms and for moving into /storage/media/movies).
-    if args.apply and os.geteuid() != 0:
-        if shutil.which("sudo") is None:
-            print("ERROR: --apply requires root and 'sudo' was not found.", file=sys.stderr)
-            return 2
-        os.execvp("sudo", ["sudo", sys.executable] + sys.argv)
 
     shell_a = Shell(host=args.ssh_a)
     shell_b = Shell(host=args.ssh_b)
@@ -1352,13 +1338,10 @@ def main() -> int:
                 a_ent = a_index[k][0]
                 b_ent = b_index[k][0]
 
-                keep = "TIE"
-                basis = "tie"
-                conf = "low"
-                reasons: List[str] = []
                 if a_sum and b_sum:
                     keep, basis, reasons, conf = recommend_keep(a_sum, b_sum)
                 else:
+                    keep, basis, conf = "REVIEW", "probe", "low"
                     reasons = [f"probe failed for {SIDE_NEW} or {SIDE_EXISTING}"]
 
                 results.append(
@@ -1380,10 +1363,11 @@ def main() -> int:
     keep_new = sum(1 for r in results if r.keep == SIDE_NEW)
     keep_existing = sum(1 for r in results if r.keep == SIDE_EXISTING)
     ties = sum(1 for r in results if r.keep == "TIE")
-    print(f"Summary: KEEP {SIDE_NEW}={keep_new}  KEEP {SIDE_EXISTING}={keep_existing}  TIE={ties}")
+    reviews = sum(1 for r in results if r.keep == "REVIEW")
+    print(f"Summary: KEEP {SIDE_NEW}={keep_new}  KEEP {SIDE_EXISTING}={keep_existing}  TIE={ties}  REVIEW={reviews}")
     print()
 
-    action_order = {SIDE_NEW: 0, SIDE_EXISTING: 1, "TIE": 2}
+    action_order = {SIDE_NEW: 0, SIDE_EXISTING: 1, "REVIEW": 2, "TIE": 3}
 
     def sort_title(r: CompareResult) -> str:
         t = r.a_ent.title or r.b_ent.title or ""
@@ -1393,7 +1377,7 @@ def main() -> int:
     results_sorted = sorted(results, key=lambda r: (action_order.get(r.keep, 9), sort_title(r)))
 
     w_action = 12
-    w_basis = 6
+    w_basis = 10
     w_conf = 6
     w_title = 38
     w_imdb = 10
@@ -1417,11 +1401,11 @@ def main() -> int:
         # matters once path-b spans more than one root.
         existing_root = os.path.basename(os.path.dirname(os.path.normpath(r.b_ent.folder)))
 
-        action = "TIE" if r.keep == "TIE" else f"KEEP {r.keep}"
+        action = r.keep if r.keep in ("TIE", "REVIEW") else f"KEEP {r.keep}"
         basis = "-" if r.keep == "TIE" else r.basis
         conf = r.confidence
         why = _clean_reason(r.reasons[0]) if r.reasons else ""
-        if r.keep in {SIDE_NEW, SIDE_EXISTING} and len(r.reasons) > 1:
+        if len(r.reasons) > 1:
             why = why + " (+more)"
         if r.notes:
             why = (why + f" [notes:{len(r.notes)}]").strip()
@@ -1469,6 +1453,8 @@ def main() -> int:
 
                 if r.keep in {SIDE_NEW, SIDE_EXISTING}:
                     print(f" RECOMMEND: KEEP {r.keep} (basis={r.basis}, confidence={r.confidence})")
+                elif r.keep == "REVIEW":
+                    print(f" RECOMMEND: REVIEW (basis={r.basis})")
                 else:
                     print(f" RECOMMEND: TIE (confidence={r.confidence})")
                 for reason in r.reasons:
@@ -1501,18 +1487,6 @@ def main() -> int:
         ambiguous,
     )
     print(f"Plan written to: {plan_path}")
-    applicable_count = sum(1 for r in results if _is_applicable(r))
-    print(f"Applicable (HIGH-confidence, imdb-keyed): {applicable_count} / {len(results)}")
-
-    if args.apply:
-        print()
-        print("=== APPLY (destructive) ===")
-        applied, skipped, errors = _apply_results(results)
-        print()
-        print(f"Apply summary: applied={applied}  skipped={skipped}  errors={errors}")
-        if errors:
-            return 1
-
     return 0
 
 
