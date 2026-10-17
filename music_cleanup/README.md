@@ -83,8 +83,9 @@ with `--publish-only`).
    files 664, ACLs stripped.
 3. Moves the album into the artist folder under the destination; removes the emptied
    `cleaned_music/<Artist>` folder.
-4. Lidarr handoff (skipped by `--no-lidarr`; a `[WARN]` and no call if `LIDARR_URL` /
-   `LIDARR_API_KEY` are unset, the files carry no release-group id, or the album is
+4. Lidarr handoff (skipped by `--no-lidarr`; a `[WARN]` and no call if the site's
+   `LIDARR_URL_<33|36>` / `LIDARR_API_KEY_<33|36>` pair is unset (site picked from the
+   host's IPs, `RC_SITE` overrides), the files carry no release-group id, or the album is
    unknown to Lidarr): `GET /api/v1/album?foreignAlbumId=<rg>`, `PUT /api/v1/album/{id}`
    with `monitored=false` if it was monitored, then `DELETE /api/v1/trackfile/bulk` for
    its track-file records so Lidarr neither re-downloads it nor believes the files still

@@ -20,6 +20,8 @@ import argparse
 import json
 import os
 import re
+import socket
+import subprocess
 import sys
 import time
 from typing import Any, Dict, List, Optional
@@ -30,14 +32,40 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-RADARR_URL  = os.getenv("RADARR_URL", "http://192.168.36.195:7878")
-API_KEY     = os.getenv("RADARR_API_KEY", "")   # no hardcoded default — set in .env
-PROFILE_ID  = int(os.getenv("RADARR_PROFILE_ID", "7"))   # "Mine"
-ROOT_FOLDER = os.getenv("RADARR_ROOT_FOLDER", "/servarr/servarr/movies")
-COMPARE_OUTPUT = "/tmp/compare_output.txt"
+# Each site (192.168.33.x and 192.168.36.x) runs its own Radarr. The script
+# talks to the one on the subnet it is running on, picked from the host's
+# own IPs; RC_SITE=33|36 overrides when detection fails.
+SITES = ("33", "36")
 
-if not API_KEY:
-    sys.exit("RADARR_API_KEY is not set — add it to .env (see .env.example).")
+
+def _local_ipv4s() -> List[str]:
+    try:
+        out = subprocess.run(["ip", "-j", "-4", "addr"], capture_output=True,
+                             text=True, check=True).stdout
+        return [a["local"] for i in json.loads(out) for a in i.get("addr_info", [])]
+    except Exception:
+        return [ai[4][0] for ai in
+                socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET)]
+
+
+def pick_site(local_ips: List[str], override: Optional[str]) -> str:
+    if override:
+        if override not in SITES:
+            sys.exit(f"RC_SITE={override!r} is not one of {SITES}.")
+        return override
+    found = {s for s in SITES for ip in local_ips if ip.startswith(f"192.168.{s}.")}
+    if len(found) != 1:
+        sys.exit(f"Cannot tell which site this host is on (local IPs: {local_ips}); "
+                 f"set RC_SITE to one of {SITES}.")
+    return found.pop()
+
+
+SITE        = pick_site(_local_ipv4s(), os.getenv("RC_SITE"))
+RADARR_URL  = os.getenv(f"RADARR_URL_{SITE}", f"http://192.168.{SITE}.195:7878")
+API_KEY     = os.getenv(f"RADARR_API_KEY_{SITE}", "")   # no hardcoded default — set in .env
+PROFILE_ID  = int(os.getenv(f"RADARR_PROFILE_ID_{SITE}", "7"))   # "Mine"
+ROOT_FOLDER = os.getenv(f"RADARR_ROOT_FOLDER_{SITE}", "/servarr/servarr/movies")
+COMPARE_OUTPUT = "/tmp/compare_output.txt"
 
 
 # ---------------------------------------------------------------------------
@@ -177,6 +205,9 @@ def main() -> int:
                     help=f"Path to compare_movie_copies.py output (default: {COMPARE_OUTPUT})")
     args = ap.parse_args()
 
+    if not API_KEY:
+        sys.exit(f"RADARR_API_KEY_{SITE} is not set — add it to .env (see .env.example).")
+
     # Dry-run by default (maintenance convention: destructive ops require --run).
     # Adding a movie to Radarr triggers an immediate Usenet search + download.
     dry_run = not args.run
@@ -185,7 +216,7 @@ def main() -> int:
 
     imdb_ids = parse_all_imdb_ids(args.compare_output)
     print(f"Movies to add: {len(imdb_ids)}")
-    print(f"Radarr:        {RADARR_URL}")
+    print(f"Radarr:        {RADARR_URL}  (site {SITE})")
     print(f"Profile:       Mine (id={PROFILE_ID})")
     print(f"Root folder:   {ROOT_FOLDER}")
     print()

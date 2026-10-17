@@ -120,9 +120,9 @@ the repo-root `.env` from any working directory.
 | `RC_MEDIA_OWNER` / `RC_MEDIA_GROUP` | `fix_media_perms.py` (shell-exported only), music publish |
 | `RC_VERIFY_SCAN_DIR` | default scan dir for `verify_movies.py`, `audit_*.py`, `audit_decode_integrity.py` (default `$RC_MEDIA_BASE/movies`) |
 | `RC_FFMPEG_BIN` / `RC_FFPROBE_BIN` | non-PATH FFmpeg for music, decode audit, library audits |
-| `RADARR_URL` / `RADARR_API_KEY` / `RADARR_PROFILE_ID` / `RADARR_ROOT_FOLDER` | `radarr_upgrade_push.py` (API key required) |
+| `RADARR_URL_33` / `RADARR_API_KEY_33` / `RADARR_PROFILE_ID_33` / `RADARR_ROOT_FOLDER_33` and the `_36` twins, `RC_SITE` | `radarr_upgrade_push.py` picks the block for the subnet the host is on (API key required); `RC_SITE=33\|36` overrides detection only when it fails |
 | `OPENSUB_API_KEY` | `foreign_cleanup/search_opensubs.py`, `fetch_opensubs.py` |
-| `LIDARR_URL` / `LIDARR_API_KEY` | `music_cleanup/music_cleaner.py` |
+| `LIDARR_URL_33` / `LIDARR_API_KEY_33` and the `_36` twins | `music_cleanup/music_cleaner.py`, same per-site pick as Radarr (handoff is skipped with a `[WARN]` when the site's pair is empty) |
 
 ## Tests
 

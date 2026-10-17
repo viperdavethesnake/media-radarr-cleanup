@@ -57,9 +57,9 @@ Scripts load configuration from `.env` (not committed; see `.env.example`). All 
 | `RC_MEDIA_OWNER` / `RC_MEDIA_GROUP` | Ownership for `fix_media_perms.py` (carried through its sudo re-exec) and music publish |
 | `RC_VERIFY_SCAN_DIR` | Library scanned by `verify_movies.py`, `audit_decode_integrity.py`, `audit_library.py`, `audit_content_vs_metadata.py`, `audit_title_mismatches.py` |
 | `RC_FFMPEG_BIN`, `RC_FFPROBE_BIN` | Custom FFmpeg locations |
-| `RADARR_URL`, `RADARR_API_KEY`, `RADARR_PROFILE_ID`, `RADARR_ROOT_FOLDER` | `maintenance/radarr_upgrade_push.py` |
+| `RADARR_URL_{33,36}`, `RADARR_API_KEY_{33,36}`, `RADARR_PROFILE_ID_{33,36}`, `RADARR_ROOT_FOLDER_{33,36}`, `RC_SITE` | `maintenance/radarr_upgrade_push.py` (one block per site; see Radarr Integration) |
 | `OPENSUB_API_KEY` | `foreign_cleanup/` subtitle search |
-| `LIDARR_URL`, `LIDARR_API_KEY` | `music_cleanup/music_cleaner.py` Lidarr handoff |
+| `LIDARR_URL_{33,36}`, `LIDARR_API_KEY_{33,36}` | `music_cleanup/music_cleaner.py` Lidarr handoff; same per-site selection as Radarr, but a missing/undecidable site only logs `[WARN]` and skips the handoff |
 
 ## System Dependencies
 
@@ -116,19 +116,20 @@ Target conventions for `maintenance/` (the older scripts only partly meet them; 
 
 ## Jellyfin Setup
 
-- **Server**: Docker on macvlan at `192.168.36.200:8096` (barley-nas, `192.168.36.40`)
+- **Servers**: one per site. `192.168.36.200:8096` ("jellyfin", Docker on macvlan on barley-nas `192.168.36.40`; the setup below describes this one) and `192.168.33.200:8096` ("jellyfin-pedro", lab-server side; Movies + TV Shows libraries only).
 - **Libraries**: Movies (`/storage/media/movies`), Documentaries (`/storage/media/documentaries`)
 - **Metadata**: NFO reader enabled, NFO saver disabled, remote image fetchers disabled
 - **Collections**: `AutomaticallyAddToCollection: true`
 - **Artwork**: `poster.jpg` + `fanart.jpg` stored alongside media files
 - **Hardware transcoding**: NVENC via RTX 5060 Ti (16 GB), tone mapping enabled
 - **Trickplay/chapters**: generated but stored in Jellyfin data dir (not alongside media)
-- **Interactive API work**: much of the Jellyfin management is done hands-on through its API rather than by a repo script. Examples: cleaning metadata, refreshing items or libraries, fixing collections. The credentials are `JELLYFIN_URL` and `JELLYFIN_API_KEY` in `.env`; send the key in the header `X-Emby-Token: <key>`. No script reads these keys, and that is intended. Never remove them.
+- **Interactive API work**: much of the Jellyfin management is done hands-on through its API rather than by a repo script. Examples: cleaning metadata, refreshing items or libraries, fixing collections. The credentials are `JELLYFIN_URL_33` / `JELLYFIN_API_KEY_33` and `JELLYFIN_URL_36` / `JELLYFIN_API_KEY_36` in `.env`; a key only works on its own server. Jellyfin 12 rejects a bare `X-Emby-Token` header (401); send `Authorization: MediaBrowser Token="<key>", Client="curl", Device="cli", DeviceId="cli", Version="1"`. No script reads these keys, and that is intended. Never remove them.
 
 ## Radarr Integration
 
-- **URL**: `http://192.168.36.195:7878` (`.env` `RADARR_URL`)
-- **API key**: in `.env` as `RADARR_API_KEY` (no fallback; the script exits if it is unset). `RADARR_URL`, `RADARR_PROFILE_ID` and `RADARR_ROOT_FOLDER` default to the live values.
+- **Two instances, one per site**: `http://192.168.33.195:7878` (lab-server side) and `http://192.168.36.195:7878` (barley-nas side). The repo is checked out on both boxes; `.env` carries a `_33` and a `_36` block (`RADARR_URL_33`, `RADARR_API_KEY_33`, ... and the `_36` twins).
+- **Site selection**: `radarr_upgrade_push.py` picks the block for the subnet the host is on, from the host's own IPv4 addresses (`192.168.33.x` → `_33`, `192.168.36.x` → `_36`). It exits if neither or both match; `RC_SITE=33|36` overrides detection in that case only. Targeting the other site's Radarr from a box is intentionally unsupported.
+- **API key**: `RADARR_API_KEY_<site>` in `.env` (no fallback; the script exits if it is unset). The URL, profile id and root folder default to the live values.
 - **Quality profile "Mine" (id=7)**: upgrades enabled, cutoff = Remux-2160p, allows Bluray-1080p / Remux-1080p / WEBDL-2160p / WEBRip-2160p / Bluray-2160p / Remux-2160p. Custom format scores: AV1=+100, h265=+75, h264=+50, Unwanted=-100.
 - **Root folder**: `/servarr/servarr/movies`
 - **Indexers**: NZBgeek + Nzb.su (Usenet, both RSS-enabled)

@@ -174,10 +174,32 @@ def test_existing_target_is_not_overwritten(stage, library):
 def test_missing_lidarr_env_warns_but_publishes(stage, library, monkeypatch):
     media, wire = library
     make_album(stage)
-    monkeypatch.delenv('LIDARR_URL', raising=False); monkeypatch.delenv('LIDARR_API_KEY', raising=False)
+    monkeypatch.setenv('RC_SITE', '33')
+    # Empty beats .env: load_dotenv never overrides a variable already set.
+    monkeypatch.setenv('LIDARR_URL_33', ''); monkeypatch.setenv('LIDARR_API_KEY_33', '')
     run('--skip-perms')
     assert (media / 'music' / 'Test_Artist' / 'Test_Album_(2026)').is_dir()
     assert '[WARN]' in (stage / 'logs' / 'music_cleaner_debug.log').read_text()
+
+
+def test_lidarr_block_follows_site(stage, library, monkeypatch):
+    media, wire = library
+    make_album(stage)
+    fake = wire('11111111-1111-1111-1111-111111111111')
+    monkeypatch.setenv('RC_SITE', '36')          # only the _33 block is wired
+    monkeypatch.setenv('LIDARR_URL_36', ''); monkeypatch.setenv('LIDARR_API_KEY_36', '')
+    run('--skip-perms')
+    assert fake.calls == []
+    assert 'LIDARR_URL_36' in (stage / 'logs' / 'music_cleaner_debug.log').read_text()
+
+
+def test_pick_site_from_local_ips():
+    assert mc.pick_site(['127.0.0.1', '192.168.33.40'], None) == '33'
+    assert mc.pick_site(['192.168.36.40'], None) == '36'
+    assert mc.pick_site(['10.0.0.5'], '33') == '33'
+    assert mc.pick_site(['10.0.0.5'], None) is None
+    assert mc.pick_site(['192.168.33.1', '192.168.36.1'], None) is None
+    assert mc.pick_site(['192.168.33.1'], '99') is None
 
 
 def test_servarr_dir_from_env(tmp_path, monkeypatch):

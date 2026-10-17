@@ -148,8 +148,9 @@ def library(stage, monkeypatch):
 
     def wire(rg_mbid, **kw):
         fake = FakeLidarr(rg_mbid, **kw)
-        monkeypatch.setenv('LIDARR_URL', fake.url)
-        monkeypatch.setenv('LIDARR_API_KEY', 'k')
+        monkeypatch.setenv('RC_SITE', '33')
+        monkeypatch.setenv('LIDARR_URL_33', fake.url)
+        monkeypatch.setenv('LIDARR_API_KEY_33', 'k')
         holder['fake'] = fake
         return fake
 

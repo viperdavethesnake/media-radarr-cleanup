@@ -13,7 +13,7 @@ Stage dirs live under $RC_SERVARR_DIR (default $RC_MEDIA_BASE/servarr = /storage
   --library DIR    destination (default $RC_MEDIA_BASE/music)
 """
 
-import argparse, os, re, shutil, signal, subprocess, sys, time, traceback
+import argparse, json, os, re, shutil, signal, socket, subprocess, sys, time, traceback
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dotenv import load_dotenv
 import mutagen
@@ -320,13 +320,42 @@ class Lidarr:
 
 _lidarr = None
 
+# Each site (192.168.33.x and 192.168.36.x) may run its own Lidarr. The
+# handoff talks to the one on the subnet this host is on, picked from the
+# host's own IPs; RC_SITE=33|36 overrides when detection fails.
+SITES = ('33', '36')
+
+
+def _local_ipv4s():
+    try:
+        out = subprocess.run(['ip', '-j', '-4', 'addr'], capture_output=True,
+                             text=True, check=True).stdout
+        return [a['local'] for i in json.loads(out) for a in i.get('addr_info', [])]
+    except Exception:
+        return [ai[4][0] for ai in
+                socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET)]
+
+
+def pick_site(local_ips, override):
+    """The site suffix for this host, or None when it cannot be decided."""
+    if override:
+        return override if override in SITES else None
+    found = {s for s in SITES for ip in local_ips if ip.startswith(f'192.168.{s}.')}
+    return found.pop() if len(found) == 1 else None
+
 
 def lidarr_client():
     global _lidarr
     if _lidarr is None and OPTS.lidarr:
-        url, key = os.getenv('LIDARR_URL'), os.getenv('LIDARR_API_KEY')
+        site = pick_site(_local_ipv4s(), os.getenv('RC_SITE'))
+        if site is None:
+            log(f"[WARN] cannot tell which site this host is on; set RC_SITE to one of {SITES}")
+            return None
+        url, key = os.getenv(f'LIDARR_URL_{site}'), os.getenv(f'LIDARR_API_KEY_{site}')
         if url and key:
             _lidarr = Lidarr(url, key)
+        else:
+            log(f"[WARN] LIDARR_URL_{site}/LIDARR_API_KEY_{site} not set")
     return _lidarr
 
 
@@ -349,7 +378,7 @@ def lidarr_handoff(album_dir, label):
     client = lidarr_client()
     if not client:
         if OPTS.lidarr:
-            log(f"[WARN] LIDARR_URL/LIDARR_API_KEY not set; {label} left monitored in Lidarr")
+            log(f"[WARN] {label} left monitored in Lidarr")
         return
     if os.path.isdir(SOURCE_DIR) and not os.path.isdir(LIDARR_KEEP_DIR):
         os.makedirs(LIDARR_KEEP_DIR)
