@@ -93,7 +93,7 @@ Python packages: `requests`, `python-dotenv`, `mutagen` (see `requirements.txt`)
 **Track selection rules**:
 - Audio: English preferred, commentary/audio-description excluded. Codec priority: TrueHD > DTS-HD > DTS > EAC3 > AC3 > FLAC > AAC > MP3
 - Subtitles: SRT preferred; SDH/HI/forced/commentary excluded
-- Video: Multiple video tracks → moved to review directory
+- Video: Multiple video tracks → moved to review directory. Cover art stored as a still-image video track (`V_MJPEG`, or PNG/MPNG in `V_MS/VFW/FOURCC`) is dropped first and does not count (`is_video_cover_art`, both remux scripts). Detection is by codec only — no real feature video uses those codecs; a second HEVC/AVC track (e.g. a Dolby Vision profile 7 enhancement layer) still goes to review
 - Chapters: stripped by the **movie** remux, **kept** by the TV remux. On episodic content the markers drive intro/recap skip in Jellyfin and Infuse, so the TV script deliberately omits `--no-chapters`. `verify_movies.py` fails surviving chapters but never scans `cleaned_tv/`, so this produces no flags — do not "restore parity" here.
 
 **TV artwork**: Sonarr's own art (`banner.jpg`, `clearlogo.png`, `seasonNN-poster.jpg`, per-episode `-thumb.jpg`) is discarded with the source folder. `tv_batch_cleaner.py` re-fetches clean copies from TMDB instead: `poster.jpg`, `fanart.jpg`, `logo.png` (English PNG only — TMDB also serves `.svg` logos, which Jellyfin cannot read), `seasonNN-poster.jpg`, and a per-episode `-thumb.jpg`. All artwork downloads are non-fatal; a transient TMDB image error must not park an otherwise-good show in `failed_tv/`. The remux renames per-episode sidecars onto the new `[2160p_hevc_eac3]` stem so Jellyfin keeps matching them.

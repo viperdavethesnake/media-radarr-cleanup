@@ -75,8 +75,10 @@ Reads `tagged/`, writes `cleaned/<same folder name>/`. 4 workers, 3600 s per rem
   back to `unknown`.
 - Only `movie.nfo`, `poster.jpg` and `fanart.jpg` are copied alongside. `metadata.json`
   and `tags.xml` stay behind and are deleted with the tagged folder.
-- More than one MKV, more than one video track, or no acceptable audio at all →
-  `review/`. mkvmerge error, timeout, or any other exception → `failed/` (partial output
+- Cover art embedded as a still-image video track (MJPEG, or PNG in a VFW wrapper) is
+  dropped by codec and not counted as a video track.
+- More than one MKV, more than one real video track (e.g. a Dolby Vision enhancement
+  layer), or no acceptable audio at all → `review/`. mkvmerge error, timeout, or any other exception → `failed/` (partial output
   removed). mkvmerge warnings (exit 1) are logged and the output kept.
 
 ### Stage 3 — `verify_movies.py`

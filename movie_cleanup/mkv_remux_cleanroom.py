@@ -90,6 +90,13 @@ def is_sub_junk(track):
         return True
     return False
 
+def is_video_cover_art(track):
+    # Some releases embed the poster as a still-image "video" track (MJPEG, or
+    # PNG in a VFW wrapper) instead of an attachment. No real feature video
+    # uses these codecs, so the codec alone is a safe signal.
+    c = codec_probe(track).upper()
+    return 'MJPEG' in c or 'MJPG' in c or 'MPNG' in c or 'PNG ' in c
+
 def codec_probe(track):
     """Combined codec-id + human-readable codec string for rank/slug matching.
 
@@ -245,6 +252,10 @@ def remux_folder(tagged_folder):
             raise Exception("No tracks found in MKV")
 
         video_tracks = [t for t in tracks if t['type'] == 'video']
+        cover_art = [t for t in video_tracks if is_video_cover_art(t)]
+        if cover_art:
+            log(f"  [VIDEO] Dropping {len(cover_art)} cover-art video track(s) in {base}")
+            video_tracks = [t for t in video_tracks if t not in cover_art]
         if len(video_tracks) > 1:
             log(f"[REVIEW] {len(video_tracks)} video tracks in {base} — needs human review")
             _move_to_review(tagged_folder, base)

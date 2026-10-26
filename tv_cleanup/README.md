@@ -83,7 +83,9 @@ Reads `tagged_tv/`, writes `cleaned_tv/`. 4 workers, one episode per job, 3600 s
   episodic content the markers drive intro/recap skip in Jellyfin and Infuse.
   `verify_movies.py` (which fails surviving chapters) never scans `cleaned_tv/`.
 - Global tags survive the remux, so embedded identity is preserved.
-- `>1 video track` or no acceptable audio → that episode (with its `.nfo` and
+- Cover art embedded as a still-image video track (MJPEG, or PNG in a VFW wrapper) is
+  dropped by codec and not counted as a video track.
+- `>1 real video track` or no acceptable audio → that episode (with its `.nfo` and
   `-thumb.jpg`) moves to `review_tv/<show>/<Season NN>/`. mkvmerge errors and timeouts
   leave the episode in `tagged_tv/` with the partial output removed, so a rerun retries
   it; every failed episode is listed with its reason at the end of the run. Stage 2
