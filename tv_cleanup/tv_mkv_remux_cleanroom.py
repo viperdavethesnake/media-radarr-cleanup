@@ -1,11 +1,18 @@
 #!/usr/bin/env python3
 
-import os, shutil, subprocess, json, time, traceback, re, signal
+import os, sys, shutil, subprocess, json, time, traceback, re, signal
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dotenv import load_dotenv
 
 load_dotenv()
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from pedro_house import playback_compat
+
+# Pedro-house playback compatibility (AC3 audio, DV handling); turned on only
+# by pedro_house/tv_remux.py via main(compat=True).
+COMPAT = False
 
 SERVARR_DIR = os.getenv('RC_SERVARR_DIR') or os.path.join(os.getenv('RC_MEDIA_BASE', '/storage/media'), 'servarr')
 TAGGED_DIR = os.path.join(SERVARR_DIR, 'tagged_tv')
@@ -158,7 +165,7 @@ def codec_id_short(codec_id):
     return 'unknown'
 
 
-def pick_best_audio(tracks):
+def pick_best_audio(tracks, compat=False):
     audios = [t for t in tracks
               if t['type'] == 'audio'
               and is_eng_lang((t.get('properties') or {}).get('language'))
@@ -167,6 +174,8 @@ def pick_best_audio(tracks):
         audios = [t for t in tracks if t['type'] == 'audio' and not is_audio_junk(t)]
     if not audios:
         return None
+    if compat:
+        return playback_compat.pick_compat_audio(audios, codec_probe)
     audios.sort(key=lambda t: audio_codec_rank(codec_probe(t)))
     return audios[0]
 
@@ -302,6 +311,8 @@ def remux_episode(job):
     log(f"  ▶ Remuxing: {show_base}/{season_dir}/{fname}")
 
     dst_mkv = None
+    ac3_file = None
+    hdr10_file = None
     try:
         info = mkv_identify(src_mkv)
         tracks = info.get('tracks') or []
@@ -313,6 +324,13 @@ def remux_episode(job):
         if cover_art:
             log(f"  [VIDEO] Dropping {len(cover_art)} cover-art video track(s) in {fname}")
             video_tracks = [t for t in video_tracks if t not in cover_art]
+        dv = playback_compat.dv_profiles(src_mkv) if COMPAT else {}
+        if len(video_tracks) > 1 and COMPAT:
+            layers = playback_compat.split_dv7_layers(video_tracks, dv, codec_probe)
+            if layers:
+                log(f"    [DV] Dropping Dolby Vision profile 7 enhancement layer "
+                    f"(track {layers[1]['id']}) in {fname}; keeping the HDR10 base layer")
+                video_tracks = [layers[0]]
         if len(video_tracks) > 1:
             log(f"  [REVIEW] {len(video_tracks)} video tracks in {fname} — needs human review")
             _move_episode_to_review(src_mkv, show_base, season_dir)
@@ -321,7 +339,7 @@ def remux_episode(job):
             raise Exception("No video tracks")
 
         video = video_tracks[0]
-        audio = pick_best_audio(tracks)
+        audio = pick_best_audio(tracks, COMPAT)
         # No acceptable audio (e.g. commentary-only): without an explicit
         # --audio-tracks selector mkvmerge would copy EVERY audio track, so
         # this must go to a human, not through the remux.
@@ -331,7 +349,9 @@ def remux_episode(job):
             return ('review', job, None)
         subtitle = pick_best_subtitle(tracks)
 
-        dst_name = enhanced_episode_name(stem, video, audio, '.mkv')
+        to_ac3 = COMPAT and playback_compat.needs_ac3(audio, codec_probe(audio))
+        dst_name = enhanced_episode_name(
+            stem, video, playback_compat.AC3_TRACK if to_ac3 else audio, '.mkv')
         dst_mkv = os.path.join(dst_dir, dst_name)
 
         # Resume support: skip only if the existing output survives validation.
@@ -358,15 +378,28 @@ def remux_episode(job):
         # markers drive intro/recap skip in Jellyfin and Infuse. verify_movies.py
         # (which fails surviving chapters) never scans cleaned_tv, so this does
         # not produce flags there.
-        cmd = ['mkvmerge', '-o', dst_mkv, '--no-attachments',
-               '--video-tracks', video_id]
-        if audio_id is not None:
+        if to_ac3:
+            ac3_file = dst_mkv + '.compat_audio.mka'
+            log(f"    [AUDIO] Converting {track_codec_short(audio)} "
+                f"{playback_compat.channels(audio)}ch to AC3 for this site")
+            playback_compat.convert_to_ac3(src_mkv, audio, ac3_file)
+        if dv.get(int(video['id'])) == 5:
+            hdr10_file = dst_mkv + '.compat_video.mkv'
+            log(f"    [DV] Converting Dolby Vision profile 5 to HDR10 (GPU) for this site")
+            playback_compat.convert_dv5_to_hdr10(src_mkv, video, hdr10_file)
+
+        cmd = ['mkvmerge', '-o', dst_mkv, '--no-attachments']
+        cmd += ['--no-video'] if hdr10_file else ['--video-tracks', video_id]
+        # Relabel to eng only when the track is English/und (und on an
+        # English-original show is assumed English). The non-English
+        # fallback keeps its real language tag — forcing eng would ship
+        # e.g. a Japanese track asserting it's English.
+        audio_lang = (audio.get('properties') or {}).get('language')
+        if ac3_file:
+            cmd += ['--no-audio']
+        else:
             cmd += ['--audio-tracks', audio_id]
-            # Relabel to eng only when the track is English/und (und on an
-            # English-original show is assumed English). The non-English
-            # fallback keeps its real language tag — forcing eng would ship
-            # e.g. a Japanese track asserting it's English.
-            if is_eng_lang((audio.get('properties') or {}).get('language')):
+            if is_eng_lang(audio_lang):
                 cmd += ['--language', f'{audio_id}:eng']
         if subtitle_id is not None:
             cmd += ['--subtitle-tracks', subtitle_id,
@@ -375,10 +408,16 @@ def remux_episode(job):
         else:
             cmd += ['--no-subtitles']
         cmd += [src_mkv]
+        cmd += playback_compat.extra_inputs(
+            video_id, audio_id, hdr10_file, ac3_file,
+            'eng' if is_eng_lang(audio_lang) else audio_lang)
 
         # 3600s matches the movie remux: benign mkvmerge warnings (exit 1) keep
         # the output; only exit >=2 is treated as a real failure.
         run_mkvmerge(cmd, fname, timeout=3600)
+        for tmp in (ac3_file, hdr10_file):
+            if tmp:
+                os.remove(tmp)
 
         _carry_sidecars(src_mkv, dst_mkv)
 
@@ -390,12 +429,16 @@ def remux_episode(job):
         detail = ((e.output or '') + (e.stderr or '')).strip()[:500]
         log(f"    ❌ mkvmerge failed on {fname}: {detail}")
         _cleanup_partial(dst_mkv)
+        _cleanup_partial(ac3_file)
+        _cleanup_partial(hdr10_file)
         return ('failed', job, detail)
     except Exception as e:
         # Covers TimeoutExpired and any other error. Drop a partial output so
         # the resume-skip (getsize > 0) doesn't later accept it as complete.
         log(f"    ❌ ERROR on {fname}: {e}")
         _cleanup_partial(dst_mkv)
+        _cleanup_partial(ac3_file)
+        _cleanup_partial(hdr10_file)
         return ('failed', job, str(e))
 
 
@@ -446,11 +489,15 @@ def finalize_show(tagged_folder, ok_count, total):
         log(f"  [CLEANUP] Skipping deletion: {ok_count}/{total} succeeded")
 
 
-def main():
-    global shutdown_requested
+def main(compat=False):
+    global shutdown_requested, COMPAT
 
     for d in (LOG_DIR, CLEANED_DIR, REVIEW_DIR):
         os.makedirs(d, exist_ok=True)
+
+    COMPAT = compat
+    if COMPAT:
+        log("▶ Pedro house playback compatibility ON (AC3 audio, DV7 base layer, DV5 -> HDR10)")
 
     folders = [os.path.join(TAGGED_DIR, d) for d in os.listdir(TAGGED_DIR)
                if os.path.isdir(os.path.join(TAGGED_DIR, d)) and not d.startswith('.')]
