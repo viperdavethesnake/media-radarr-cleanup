@@ -263,6 +263,8 @@ def write_nfo(meta, imdbid, dest):
     if collection:
         safe_sub(root, 'set', collection.get("name"))
         safe_sub(root, 'setid', str(collection.get("id")))
+        # Jellyfin ignores <setid>; it reads <collectionnumber> as the TMDb collection id.
+        safe_sub(root, 'collectionnumber', str(collection.get("id")))
         safe_sub(root, 'setoverview', collection.get("overview"))
 
     ElementTree(root).write(dest, encoding="utf-8", xml_declaration=True)
