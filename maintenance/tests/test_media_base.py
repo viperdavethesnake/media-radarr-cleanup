@@ -25,6 +25,7 @@ def load(name, monkeypatch, env):
     ('audit_existing_libraries', 'DEFAULT_DOCS_DIR', '/x/documentaries'),
     ('audit_existing_libraries', 'DEFAULT_MOVE_DEST', '/x/working/movies'),
     ('fix_media_perms', 'BASE', '/x'),
+    ('audit_nfos', 'DEFAULT_SCAN_DIRS', ['/x/movies', '/x/movies2', '/x/documentaries']),
 ])
 def test_default_paths_derive_from_media_base(script, attr, expect, monkeypatch):
     m = load(script, monkeypatch, {'RC_MEDIA_BASE': '/x'})
@@ -33,7 +34,7 @@ def test_default_paths_derive_from_media_base(script, attr, expect, monkeypatch)
 
 @pytest.mark.parametrize('script', [
     'codec_bitrate_report', 'orphaned_metadata_cleanup', 'orphaned_tv_metadata_report',
-    'audit_existing_libraries', 'audit_title_mismatches', 'fix_media_perms',
+    'audit_existing_libraries', 'audit_title_mismatches', 'fix_media_perms', 'audit_nfos',
 ])
 def test_script_loads_dotenv(script, monkeypatch):
     calls = []

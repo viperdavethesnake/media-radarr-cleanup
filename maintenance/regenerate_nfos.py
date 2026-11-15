@@ -242,7 +242,9 @@ def build_nfo(meta: dict, imdb_id: str) -> Element:
         set_el = SubElement(root, "set")
         _xml_sub(set_el, "name",     collection.get("name"))
         _xml_sub(set_el, "overview", collection.get("overview", ""))
-        # Jellyfin reads collectionnumber and uniqueid type="tmdbcol" (NOT setid)
+        # Jellyfin reads the collection ID from <setid> (what batch_cleaner writes)
+        # as well as from collectionnumber / uniqueid type="tmdbcol"; this writer
+        # uses the latter two. Verified 2026-11 on Jellyfin 12.
         _xml_sub(root, "collectionnumber", col_id)
         if col_id:
             uid = SubElement(root, "uniqueid", type="tmdbcol")

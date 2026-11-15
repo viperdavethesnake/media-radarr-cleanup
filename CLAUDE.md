@@ -39,6 +39,7 @@ python3 music_cleanup/music_cleaner.py --no-publish # stop at cleaned_music/ (--
 ./maintenance/audit_existing_libraries.py --movies-dir /storage/media/movies --deep
 ./maintenance/compare_movie_copies.py --path-a /storage/media/servarr/cleaned --path-b /storage/media/movies,/storage/media/movies2 --details
 ./maintenance/audit_library.py /storage/media/movies --out /tmp/audit   # full 10-check audit
+./maintenance/audit_nfos.py                    # movie.nfo structure/consistency across movies, movies2, documentaries (~1 s)
 ./maintenance/audit_decode_integrity.py --workers 3 --threads 4         # ffmpeg full-decode pass; --resume <jsonl> to continue
 
 ```
