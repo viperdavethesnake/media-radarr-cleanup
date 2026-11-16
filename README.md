@@ -10,6 +10,7 @@ ZFS-backed media server; paths default to that box and are overridable via `.env
 media-radarr-cleanup/
 ├── movie_cleanup/      batch_cleaner.py → mkv_remux_cleanroom.py → verify_movies.py  (+ helpers/)
 ├── tv_cleanup/         tv_batch_cleaner.py → tv_mkv_remux_cleanroom.py
+├── pedro_house/        site-33 remux entry points (movie_remux.py, tv_remux.py) + playback_compat.py
 ├── music_cleanup/      music_cleaner.py (Lidarr → ALAC → library → Lidarr handoff)
 ├── foreign_cleanup/    spec-driven pipeline for non-English-original films (PIPELINE.md)
 ├── maintenance/        library audits, comparisons, permissions, NFO regeneration, Radarr push
@@ -59,12 +60,12 @@ source .venv/bin/activate
 
 # Movies: movies/ -> tagged/ -> cleaned/, then verify the library
 python3 movie_cleanup/batch_cleaner.py
-python3 movie_cleanup/mkv_remux_cleanroom.py
+python3 movie_cleanup/mkv_remux_cleanroom.py                # site 36; at site 33 run pedro_house/movie_remux.py instead
 python3 movie_cleanup/verify_movies.py                      # scans $RC_VERIFY_SCAN_DIR
 
 # TV: tvshows/ -> tagged_tv/ -> cleaned_tv/
 python3 tv_cleanup/tv_batch_cleaner.py
-python3 tv_cleanup/tv_mkv_remux_cleanroom.py
+python3 tv_cleanup/tv_mkv_remux_cleanroom.py                # site 36; at site 33 run pedro_house/tv_remux.py instead
 
 # Music: music/ -> cleaned_music/ -> $RC_MEDIA_BASE/music + Lidarr unmonitor
 python3 music_cleanup/music_cleaner.py                      # --no-publish / --publish-only / --no-lidarr / --library DIR
@@ -77,6 +78,22 @@ The batch and remux scripts take no flags. All of them run 4 workers: the stages
 storage-bound against one ZFS pool and more workers make them slower (see `CLAUDE.md`).
 Foreign-original films are rejected by the movie and TV batch stages and handled by
 `foreign_cleanup/` instead.
+
+## Two sites, two remux steps
+
+The repo runs at two houses with different playback gear, and the remux step differs
+between them for good:
+
+| Site | Host | Remux scripts | Output |
+|---|---|---|---|
+| 36 | barley-nas (`192.168.36.x`) | `movie_cleanup/mkv_remux_cleanroom.py`, `tv_cleanup/tv_mkv_remux_cleanroom.py` | best lossless audio, Dolby Vision kept |
+| 33 | lab-server (`192.168.33.x`) | `pedro_house/movie_remux.py`, `pedro_house/tv_remux.py` | AC3/EAC3 audio, Dolby Vision removed or converted to HDR10 |
+
+Nothing detects the site: the split is which script you run. Running the wrong one does
+not fail, it produces the other house's files. A site-33 run logs `Pedro house playback
+compatibility ON` when it starts. Every other script is the same at both sites. Details
+and the reasons are in `pedro_house/README.md`; the two Radarr/Sonarr quality profiles
+differ on purpose as well (`CLAUDE.md`).
 
 ## Maintenance scripts
 

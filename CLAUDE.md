@@ -11,6 +11,23 @@ Pipeline order:
 2. `mkv_remux_cleanroom.py` / `tv_mkv_remux_cleanroom.py` — track selection, chapter/attachment removal. Scans `tagged/` only and writes to `cleaned/`. The movie pipeline touches only `movies/` → `tagged/` → `cleaned/` (plus `failed/`/`review/`); it never reads or writes `foreign/`. All of these live under `$RC_SERVARR_DIR`.
 3. `verify_movies.py` — Jellyfin compatibility validation (movies only). It is an **English-pipeline gate**: it fails anything with non-English primary audio or surviving chapters. That is intentional — a foreign film that sneaks past the batch stage should flag. Side effect: legitimate foreign_cleanup outputs staged in the shared `cleaned/` dir (which keep chapters and original-language audio by design) will also show FAILED. Those flags are expected noise, not defects — do not "fix" verify to skip them, and never auto-move flagged folders (it would yank the foreign pipeline's staged outputs).
 
+## Site split
+
+The repo is checked out at two houses that must be processed differently, permanently:
+
+| | Site 36 (barley-nas, `192.168.36.x`) | Site 33 (lab-server, `192.168.33.x`, "Pedro house") |
+|---|---|---|
+| Playback chain | Atmos + Dolby Vision capable | 2018 Samsung TV + Yamaha AVR over ARC: no DV, DTS, TrueHD or AV1 |
+| Remux scripts | `movie_cleanup/mkv_remux_cleanroom.py`, `tv_cleanup/tv_mkv_remux_cleanroom.py` | `pedro_house/movie_remux.py`, `pedro_house/tv_remux.py` |
+| Remux result | best lossless audio, DV kept | AC3/EAC3 audio, DV removed or converted to HDR10 |
+| Radarr "Mine" profile | allows Remux, no DV/AV1 blocks | no Remux, AV1 and DV-without-fallback blocked (see Radarr Integration) |
+
+- Everything site-33-specific lives in `pedro_house/`. The shared remux scripts only carry a `compat` switch that is off unless a `pedro_house` entry point turns it on.
+- The remux choice is **manual**: nothing checks which host a script runs on. The shared remux at site 33 produces files that TV cannot play directly; a `pedro_house` remux at site 36 strips Atmos and Dolby Vision. A compat run logs `Pedro house playback compatibility ON` at start; a run without that line was a site-36-style run.
+- Never apply site-33 tuning (scripts or Radarr/Sonarr profile changes) to site 36, and do not "align" the two profiles.
+- Every other script (batch cleaners, verify, music, foreign, maintenance) is the same at both sites. Radarr and Lidarr pick their `_33`/`_36` `.env` block from the host's subnet.
+- `compare_movie_copies.py` ranks DV, remux and lossless audio higher, so a site-33 copy is expected to lose to its site-36 counterpart. That is the split working, not a library defect.
+
 ## Running Scripts
 
 ```bash
@@ -19,14 +36,19 @@ source .venv/bin/activate   # Python 3.14 venv at repo root
 # All pipeline scripts resolve stage dirs and logs from RC_SERVARR_DIR
 # (default $RC_MEDIA_BASE/servarr = /storage/media/servarr). CWD does not matter.
 
+# The remux step differs per site; the choice is made by which script you run,
+# nothing detects the site. See "Site split" above.
+
 # Movie pipeline
 python3 movie_cleanup/batch_cleaner.py
-python3 movie_cleanup/mkv_remux_cleanroom.py
+python3 movie_cleanup/mkv_remux_cleanroom.py   # site 36 (barley-nas)
+python3 pedro_house/movie_remux.py             # site 33 (lab-server), instead of the line above
 python3 movie_cleanup/verify_movies.py --scan-dir /storage/media/servarr/cleaned
 
 # TV pipeline
 python3 tv_cleanup/tv_batch_cleaner.py
-python3 tv_cleanup/tv_mkv_remux_cleanroom.py
+python3 tv_cleanup/tv_mkv_remux_cleanroom.py   # site 36 (barley-nas)
+python3 pedro_house/tv_remux.py                # site 33 (lab-server), instead of the line above
 
 # Music pipeline
 python3 music_cleanup/music_cleaner.py              # music/ -> cleaned_music/ -> /storage/media/music + Lidarr unmonitor
@@ -93,6 +115,7 @@ Python packages: `requests`, `python-dotenv`, `mutagen` (see `requirements.txt`)
 
 **Track selection rules**:
 - Audio: English preferred, commentary/audio-description excluded. Codec priority: TrueHD > DTS-HD > DTS > EAC3 > AC3 > FLAC > AAC > MP3
+- **Pedro house (site 33) overrides**: run `pedro_house/movie_remux.py` / `pedro_house/tv_remux.py` there instead of the shared remux scripts. They call the shared `main(compat=True)`, which prefers AC3 > EAC3, converts DTS/TrueHD/etc. to AC3 5.1, drops a dual-track DV profile 7 enhancement layer, and converts DV profile 5 to HDR10 on the RTX. Logic in `pedro_house/playback_compat.py`; details in `pedro_house/README.md`. With `compat=False` (the default, site 36) behaviour is unchanged.
 - Subtitles: SRT preferred; SDH/HI/forced/commentary excluded
 - Video: Multiple video tracks → moved to review directory. Cover art stored as a still-image video track (`V_MJPEG`, or PNG/MPNG in `V_MS/VFW/FOURCC`) is dropped first and does not count (`is_video_cover_art`, both remux scripts). Detection is by codec only — no real feature video uses those codecs; a second HEVC/AVC track (e.g. a Dolby Vision profile 7 enhancement layer) still goes to review
 - Chapters: stripped by the **movie** remux, **kept** by the TV remux. On episodic content the markers drive intro/recap skip in Jellyfin and Infuse, so the TV script deliberately omits `--no-chapters`. `verify_movies.py` fails surviving chapters but never scans `cleaned_tv/`, so this produces no flags — do not "restore parity" here.
@@ -131,7 +154,7 @@ Target conventions for `maintenance/` (the older scripts only partly meet them; 
 - **Two instances, one per site**: `http://192.168.33.195:7878` (lab-server side) and `http://192.168.36.195:7878` (barley-nas side). The repo is checked out on both boxes; `.env` carries a `_33` and a `_36` block (`RADARR_URL_33`, `RADARR_API_KEY_33`, ... and the `_36` twins).
 - **Site selection**: `radarr_upgrade_push.py` picks the block for the subnet the host is on, from the host's own IPv4 addresses (`192.168.33.x` → `_33`, `192.168.36.x` → `_36`). It exits if neither or both match; `RC_SITE=33|36` overrides detection in that case only. Targeting the other site's Radarr from a box is intentionally unsupported.
 - **API key**: `RADARR_API_KEY_<site>` in `.env` (no fallback; the script exits if it is unset). The URL, profile id and root folder default to the live values.
-- **Quality profile "Mine" (id=7)**: upgrades enabled, cutoff = Remux-2160p, allows Bluray-1080p / Remux-1080p / WEBDL-2160p / WEBRip-2160p / Bluray-2160p / Remux-2160p. Custom format scores: AV1=+100, h265=+75, h264=+50, Unwanted=-100.
+- **Quality profile "Mine" (id=7)**: as of 2026-11-14 the site-33 profile is tuned for the Pedro house TV/AVR: upgrades enabled, cutoff = Bluray-2160p, allows Bluray-1080p / WEBDL-2160p / WEBRip-2160p / Bluray-2160p (no Remux). Custom format scores: AV1, H264 10-bit, DV no HDR fallback = -10000 (blocked); Unwanted=-100; h265=+75, h264=+50, HDR=+20. Audio is deliberately not scored (AC3 and EAC3 formats exist but are 0 since 2026-11-15): the AC3 bonus made grabs chase `DD5.1`-labelled posts over better/complete ones, and audio compatibility is the remux's job. Sonarr site 33 "Mine" has the same formats and scores. The site-36 profile differs by design (allows Remux, no AV1/DV blocks, no HDR or audio formats) and must never be aligned with this one.
 - **Root folder**: `/servarr/servarr/movies`
 - **Indexers**: NZBgeek + Nzb.su (Usenet, both RSS-enabled)
 
@@ -199,6 +222,7 @@ POST /api/v3/command
 
 ```
 movie_cleanup/      Main movie pipeline + helpers/ + tests/
+pedro_house/        Site-33 playback-compat remux entry points + playback_compat.py + tests/
 tv_cleanup/         Main TV pipeline
 music_cleanup/      Music pipeline: Lidarr staging -> ALAC -> library + tests/ (see its README)
 foreign_cleanup/    Spec-driven pipeline for non-English-original films (PIPELINE.md, spec_*.json, subs/)

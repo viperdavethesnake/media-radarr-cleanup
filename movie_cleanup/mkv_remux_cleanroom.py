@@ -6,6 +6,13 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from pedro_house import playback_compat
+
+# Pedro-house playback compatibility (AC3 audio, DV handling); turned on only
+# by pedro_house/movie_remux.py via main(compat=True).
+COMPAT = False
+
 SERVARR_DIR = os.getenv('RC_SERVARR_DIR') or os.path.join(os.getenv('RC_MEDIA_BASE', '/storage/media'), 'servarr')
 TAGGED_DIR = os.path.join(SERVARR_DIR, 'tagged')
 CLEANED_DIR = os.path.join(SERVARR_DIR, 'cleaned')
@@ -142,7 +149,7 @@ def codec_id_short(codec_id):
     if 'MPEG/L3' in c or 'MP3' in c: return 'mp3'
     return 'unknown'
 
-def pick_best_audio(tracks):
+def pick_best_audio(tracks, compat=False):
     # Prefer English, non-junk; fall back to any non-junk.
     audios = [t for t in tracks
               if t['type'] == 'audio'
@@ -152,6 +159,8 @@ def pick_best_audio(tracks):
         audios = [t for t in tracks if t['type'] == 'audio' and not is_audio_junk(t)]
     if not audios:
         return None
+    if compat:
+        return playback_compat.pick_compat_audio(audios, codec_probe)
     audios.sort(key=lambda t: audio_codec_rank(codec_probe(t)))
     return audios[0]
 
@@ -256,6 +265,13 @@ def remux_folder(tagged_folder):
         if cover_art:
             log(f"  [VIDEO] Dropping {len(cover_art)} cover-art video track(s) in {base}")
             video_tracks = [t for t in video_tracks if t not in cover_art]
+        dv = playback_compat.dv_profiles(src_mkv) if COMPAT else {}
+        if len(video_tracks) > 1 and COMPAT:
+            layers = playback_compat.split_dv7_layers(video_tracks, dv, codec_probe)
+            if layers:
+                log(f"  [DV] Dropping Dolby Vision profile 7 enhancement layer "
+                    f"(track {layers[1]['id']}); keeping the HDR10 base layer")
+                video_tracks = [layers[0]]
         if len(video_tracks) > 1:
             log(f"[REVIEW] {len(video_tracks)} video tracks in {base} — needs human review")
             _move_to_review(tagged_folder, base)
@@ -264,7 +280,7 @@ def remux_folder(tagged_folder):
             raise Exception("No video tracks in MKV")
 
         video = video_tracks[0]
-        audio = pick_best_audio(tracks)
+        audio = pick_best_audio(tracks, COMPAT)
         # No acceptable audio (e.g. commentary-only): without an explicit
         # --audio-tracks selector mkvmerge would copy EVERY audio track, so
         # this must go to a human, not through the remux.
@@ -286,8 +302,23 @@ def remux_folder(tagged_folder):
 
         dst_folder = os.path.join(CLEANED_DIR, base)
         os.makedirs(dst_folder, exist_ok=True)
+
+        ac3_file = None
+        if COMPAT and playback_compat.needs_ac3(audio, codec_probe(audio)):
+            ac3_file = os.path.join(dst_folder, '.compat_audio.mka')
+            log(f"  [AUDIO] Converting {track_codec_short(audio)} "
+                f"{playback_compat.channels(audio)}ch to AC3 for this site")
+            playback_compat.convert_to_ac3(src_mkv, audio, ac3_file)
+
+        hdr10_file = None
+        if dv.get(int(video['id'])) == 5:
+            hdr10_file = os.path.join(dst_folder, '.compat_video.mkv')
+            log(f"  [DV] Converting Dolby Vision profile 5 to HDR10 (GPU) for this site")
+            playback_compat.convert_dv5_to_hdr10(src_mkv, video, hdr10_file)
+
         if meta:
-            dst_mkv_name = enhanced_file_name(meta, video, audio, '.mkv')
+            dst_mkv_name = enhanced_file_name(
+                meta, video, playback_compat.AC3_TRACK if ac3_file else audio, '.mkv')
         else:
             dst_mkv_name = mkv_file
         dst_mkv = os.path.join(dst_folder, dst_mkv_name)
@@ -297,15 +328,18 @@ def remux_folder(tagged_folder):
         audio_id = str(audio['id']) if audio else None
         subtitle_id = str(subtitle['id']) if subtitle else None
 
-        cmd = ['mkvmerge', '-o', dst_mkv, '--no-chapters', '--no-attachments',
-               '--video-tracks', video_id]
-        if audio_id is not None:
+        cmd = ['mkvmerge', '-o', dst_mkv, '--no-chapters', '--no-attachments']
+        cmd += ['--no-video'] if hdr10_file else ['--video-tracks', video_id]
+        # Relabel to eng only when the track is English/und (und on an
+        # English-original film is assumed English). The non-English
+        # fallback keeps its real language tag — forcing eng would ship
+        # e.g. a French dub asserting it's English.
+        audio_lang = (audio.get('properties') or {}).get('language')
+        if ac3_file:
+            cmd += ['--no-audio']
+        else:
             cmd += ['--audio-tracks', audio_id]
-            # Relabel to eng only when the track is English/und (und on an
-            # English-original film is assumed English). The non-English
-            # fallback keeps its real language tag — forcing eng would ship
-            # e.g. a French dub asserting it's English.
-            if is_eng_lang((audio.get('properties') or {}).get('language')):
+            if is_eng_lang(audio_lang):
                 cmd += ['--language', f'{audio_id}:eng']
         if subtitle_id is not None:
             cmd += ['--subtitle-tracks', subtitle_id,
@@ -314,12 +348,18 @@ def remux_folder(tagged_folder):
         else:
             cmd += ['--no-subtitles']
         cmd += [src_mkv]
+        cmd += playback_compat.extra_inputs(
+            video_id, audio_id, hdr10_file, ac3_file,
+            'eng' if is_eng_lang(audio_lang) else audio_lang)
 
         log(f"  [CMD] {' '.join(cmd)}")
         # 3600s: largest ~90 GB 4K remuxes run ~2600s at the measured ~34 MB/s
         # floor under 4-way + co-resident Jellyfin load. 1800s was on the edge
         # (60 GB files finished at 1798s).
         run_mkvmerge(cmd, base, timeout=3600)
+        for tmp in (ac3_file, hdr10_file):
+            if tmp:
+                os.remove(tmp)
 
         # Copy sidecars
         for fname in ['movie.nfo', 'poster.jpg', 'fanart.jpg']:
@@ -350,11 +390,15 @@ def remux_folder(tagged_folder):
         if os.path.isdir(tagged_folder):
             _move_to_failed(tagged_folder, base)
 
-def main():
-    global shutdown_requested
+def main(compat=False):
+    global shutdown_requested, COMPAT
 
     for d in (LOG_DIR, CLEANED_DIR, REVIEW_DIR, FAILED_DIR, TAGGED_DIR):
         os.makedirs(d, exist_ok=True)
+
+    COMPAT = compat
+    if COMPAT:
+        log("▶ Pedro house playback compatibility ON (AC3 audio, DV7 base layer, DV5 -> HDR10)")
 
     tagged_folders = [os.path.join(TAGGED_DIR, d) for d in os.listdir(TAGGED_DIR)
                       if os.path.isdir(os.path.join(TAGGED_DIR, d)) and not d.startswith('.')]
