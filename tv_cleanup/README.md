@@ -71,6 +71,9 @@ presence proves the episode finished).
 
 ### Stage 2 — `tv_mkv_remux_cleanroom.py`
 
+> At site 33 (lab-server) run `pedro_house/tv_remux.py` instead; it is this script with
+> playback compatibility on. See `pedro_house/README.md`.
+
 Reads `tagged_tv/`, writes `cleaned_tv/`. 4 workers, one episode per job, 3600 s per remux.
 
 - Keeps one video, one audio, at most one subtitle track.

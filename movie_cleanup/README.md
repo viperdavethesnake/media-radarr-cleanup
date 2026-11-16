@@ -58,6 +58,9 @@ become `_`. The IMDb id lives in the embedded tags, not the filename.
 
 ### Stage 2 — `mkv_remux_cleanroom.py`
 
+> At site 33 (lab-server) run `pedro_house/movie_remux.py` instead; it is this script with
+> playback compatibility on. See `pedro_house/README.md`.
+
 Reads `tagged/`, writes `cleaned/<same folder name>/`. 4 workers, 3600 s per remux.
 
 - Keeps one video, one audio, at most one subtitle. `--no-chapters --no-attachments`.
